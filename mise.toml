@@ -1,0 +1,31 @@
+[tools]
+bun = "1.3.14"
+
+[tasks.format]
+description = "Format and auto-fix source files"
+run = "bun run biome check --write ."
+
+[tasks.lint]
+description = "Check formatting and lint rules"
+run = "bun run biome check ."
+
+[tasks.typecheck]
+description = "Type-check source, tests, and examples"
+run = "bun run tsc --project tsconfig.json"
+
+[tasks.test]
+description = "Run unit tests"
+run = "bun test"
+
+[tasks.build]
+description = "Build ESM and TypeScript declarations"
+run = "rm -rf dist && bun run tsc --project tsconfig.build.json"
+
+[tasks.check]
+description = "Run all verification checks"
+depends = ["lint", "typecheck", "test", "build"]
+
+[tasks.pack]
+description = "Validate npm package contents"
+depends = ["build"]
+run = "bun pm pack --dry-run"

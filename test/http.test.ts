@@ -1,0 +1,80 @@
+import { describe, expect, test } from "bun:test";
+import { AuthController } from "../src/auth.js";
+import { ApiError } from "../src/errors.js";
+import { HttpClient, normalizeBaseUrl } from "../src/http.js";
+import { MemoryTokenStore } from "../src/token-store.js";
+
+describe("HttpClient", () => {
+  test("uses WHAM routes and ChatGPT auth headers", async () => {
+    let capturedUrl: string | undefined;
+    let capturedHeaders: Headers | undefined;
+    const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      capturedUrl = String(input);
+      capturedHeaders = new Headers(init?.headers);
+      return Response.json({ items: [], cursor: null });
+    };
+    const client = makeClient(fetch);
+
+    await client.request("/tasks/list", {
+      query: { limit: 20, task_filter: "current", absent: undefined },
+    });
+
+    expect(capturedUrl).toBe(
+      "https://chatgpt.com/backend-api/wham/tasks/list?limit=20&task_filter=current",
+    );
+    expect(capturedHeaders?.get("authorization")).toBe("Bearer access");
+    expect(capturedHeaders?.get("chatgpt-account-id")).toBe("account");
+  });
+
+  test("refreshes and retries once after a 401", async () => {
+    const seenTokens: string[] = [];
+    const store = new MemoryTokenStore({
+      accessToken: "old-access",
+      refreshToken: "refresh",
+      accountId: "account",
+    });
+    const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+      if (String(input).includes("oauth/token")) {
+        return Response.json({ access_token: "new-access", refresh_token: "new-refresh" });
+      }
+      seenTokens.push(new Headers(init?.headers).get("authorization") ?? "");
+      return seenTokens.length === 1
+        ? new Response(null, { status: 401 })
+        : Response.json({ ok: true });
+    };
+    const auth = new AuthController({ tokenStore: store, fetch });
+    const client = new HttpClient({ auth, fetch });
+
+    expect(await client.request<{ ok: boolean }>("/test")).toEqual({ ok: true });
+    expect(seenTokens).toEqual(["Bearer old-access", "Bearer new-access"]);
+    expect((await store.load()).refreshToken).toBe("new-refresh");
+  });
+
+  test("does not expose a response body in API errors", async () => {
+    const client = makeClient(async () =>
+      Response.json({ error: { message: "secret value was invalid" } }, { status: 400 }),
+    );
+
+    const error = await client
+      .request("/environments", { method: "PATCH" })
+      .catch((value) => value);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(String(error)).not.toContain("secret value");
+  });
+});
+
+test("normalizeBaseUrl adds backend-api for ChatGPT hosts", () => {
+  expect(normalizeBaseUrl("https://chatgpt.com/")).toBe("https://chatgpt.com/backend-api");
+  expect(normalizeBaseUrl("https://example.test/")).toBe("https://example.test");
+});
+
+function makeClient(
+  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+): HttpClient {
+  const auth = new AuthController({
+    tokenStore: new MemoryTokenStore({ accessToken: "access", accountId: "account" }),
+    fetch,
+  });
+  return new HttpClient({ auth, fetch });
+}

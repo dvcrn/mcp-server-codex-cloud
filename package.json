@@ -1,0 +1,31 @@
+{
+  "name": "mcp-server-codex-cloud",
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.12",
+    "@modelcontextprotocol/client": "2.0.0",
+    "@types/bun": "latest",
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  },
+  "type": "module",
+  "version": "0.1.0",
+  "description": "MCP server for Codex Cloud environments and tasks",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "API.md"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.0.0",
+    "zod": "4"
+  },
+  "bin": {
+    "mcp-server-codex-cloud": "./dist/cli.js"
+  }
+}
