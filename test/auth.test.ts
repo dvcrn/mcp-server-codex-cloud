@@ -98,3 +98,19 @@ test("invalid refresh payload cannot replace stored credentials", async () => {
   await expect(auth.refresh()).rejects.toThrow("did not include an access token");
   expect(await store.load()).toEqual(tokens);
 });
+
+test("refresh save includes the credentials it replaces", async () => {
+  const previous = { accessToken: "old", refreshToken: "refresh" };
+  let expected: unknown;
+  const auth = new AuthController({
+    tokenStore: {
+      load: async () => previous,
+      save: async (_tokens, current) => {
+        expected = current;
+      },
+    },
+    fetch: async () => Response.json({ access_token: "new" }),
+  });
+  await auth.refresh();
+  expect(expected).toEqual(previous);
+});

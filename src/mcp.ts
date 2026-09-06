@@ -1,7 +1,7 @@
 import { McpServer, type ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { CodexCloudClient } from "./client.js";
-import { ApiError, AuthenticationError } from "./errors.js";
+import { ApiError, AuthenticationError, TokenRefreshError } from "./errors.js";
 
 const id = z.string().trim().min(1);
 const repository = z.union([
@@ -70,14 +70,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
           const result = await run(input, ctx.mcpReq.signal);
           return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
         } catch (error) {
-          const message =
-            error instanceof DOMException && error.name === "TimeoutError"
-              ? "Timed out waiting for the task. Poll get_task or wait_for_task again."
-              : error instanceof ApiError
-                ? `Codex Cloud returned HTTP ${error.status}`
-                : error instanceof AuthenticationError
-                  ? "Codex authentication failed. Renew or reseed credentials."
-                  : "Codex Cloud operation failed. Check the inputs and retry.";
+          const message = toolError(error, name);
           return { isError: true, content: [{ type: "text" as const, text: message }] };
         }
       },
@@ -188,4 +181,19 @@ type Defined<T> = T extends object ? { [K in keyof T]: Defined<Exclude<T[K], und
 
 function defined<T>(value: T): Defined<T> {
   return JSON.parse(JSON.stringify(value));
+}
+
+function toolError(error: unknown, name: string): string {
+  if (name === "wait_for_task" && error instanceof DOMException && error.name === "TimeoutError") {
+    return "Timed out waiting for the task. Poll get_task or wait_for_task again.";
+  }
+  if (error instanceof ApiError) return `Codex Cloud returned HTTP ${error.status}`;
+  if (error instanceof TokenRefreshError && error.status) {
+    return `Codex OAuth refresh failed with HTTP ${error.status}. Renew or reseed credentials.`;
+  }
+  if (error instanceof AuthenticationError)
+    return "Codex authentication failed. Renew or reseed credentials.";
+  if (name === "start_task")
+    return "Task creation failed or its result was lost. Check list_tasks before starting another task.";
+  return "Codex Cloud operation failed. Check the inputs and retry.";
 }

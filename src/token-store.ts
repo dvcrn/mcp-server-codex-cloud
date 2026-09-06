@@ -13,7 +13,8 @@ export interface CodexTokens {
 
 export interface TokenStore {
   load(): Promise<CodexTokens>;
-  save(tokens: CodexTokens): Promise<void>;
+  /** Atomically reject stale refresh writes when the store supports concurrent replacement. */
+  save(tokens: CodexTokens, previous?: CodexTokens): Promise<void>;
 }
 
 export class MemoryTokenStore implements TokenStore {

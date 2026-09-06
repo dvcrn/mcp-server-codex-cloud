@@ -54,7 +54,7 @@ export class HttpClient {
     }
 
     if (response.status === 204) return undefined as T;
-    const text = await response.text();
+    const text = await abortable(response.text(), options.signal);
     if (!text) return undefined as T;
     try {
       return JSON.parse(text) as T;
@@ -83,7 +83,7 @@ export class HttpClient {
     const init: RequestInit = { method, headers };
     if (options.body !== undefined) init.body = JSON.stringify(options.body);
     if (options.signal) init.signal = options.signal;
-    return this.#fetch(url, init);
+    return abortable(this.#fetch(url, init), options.signal);
   }
 
   #url(path: `/${string}`, query?: ApiRequestOptions["query"]): string {

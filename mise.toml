@@ -1,3 +1,6 @@
+[env]
+CODEX_WORKER_URL = "https://mcp-server-codex-cloud.dsh.workers.dev"
+
 [tools]
 bun = "1.3.14"
 
@@ -23,9 +26,38 @@ run = "rm -rf dist && bun run tsc --project tsconfig.build.json"
 
 [tasks.check]
 description = "Run all verification checks"
-depends = ["lint", "typecheck", "test", "build"]
+depends = ["lint", "typecheck", "test", "build", "worker:check", "worker:build"]
 
 [tasks.pack]
 description = "Validate npm package contents"
 depends = ["build"]
 run = "bun pm pack --dry-run"
+
+[tasks."worker:types"]
+run = "bun run wrangler types"
+
+[tasks."worker:check"]
+depends = ["worker:types"]
+run = "bun run tsc --project tsconfig.worker.json"
+
+[tasks."worker:dev"]
+run = "bun run wrangler dev --ip 127.0.0.1"
+
+[tasks."worker:build"]
+run = "bun run wrangler deploy --dry-run"
+
+[tasks."worker:deploy"]
+run = "bun run wrangler deploy"
+
+[tasks."worker:secret"]
+run = "fnox exec --profile production --no-defaults -- bun scripts/upload-secret.ts"
+
+[tasks."worker:seed"]
+run = "fnox exec --profile production --no-defaults -- bun scripts/seed-worker.ts"
+
+[tasks."worker:smoke"]
+env = { CODEX_WORKER_URL = "http://127.0.0.1:8787" }
+run = "bun scripts/smoke-worker.ts"
+
+[tasks."worker:smoke:remote"]
+run = "fnox exec --profile production --no-defaults -- bun scripts/smoke-worker.ts"

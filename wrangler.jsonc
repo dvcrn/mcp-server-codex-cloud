@@ -1,0 +1,43 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "mcp-server-codex-cloud",
+  "main": "worker/index.ts",
+  "account_id": "02c07a2514d9a25f58c78a180bb8c6f3",
+  "compatibility_date": "2026-09-06",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "CODEX_ACCOUNT",
+        "class_name": "CodexAccount"
+      },
+      {
+        "name": "CODEX_EGRESS",
+        "class_name": "CodexEgress"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["CodexAccount"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["CodexEgress"]
+    }
+  ],
+  "observability": {
+    "enabled": false
+  },
+  "containers": [
+    {
+      "class_name": "CodexEgress",
+      "image": "./container/Dockerfile",
+      "image_build_context": "./container",
+      "instance_type": "lite",
+      "max_instances": 1
+    }
+  ]
+}

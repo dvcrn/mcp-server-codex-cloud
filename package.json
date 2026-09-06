@@ -2,10 +2,12 @@
   "name": "mcp-server-codex-cloud",
   "devDependencies": {
     "@biomejs/biome": "^2.5.12",
+    "@cloudflare/containers": "^0.3.7",
     "@modelcontextprotocol/client": "2.0.0",
     "@types/bun": "latest",
     "@types/node": "^26.4.1",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "wrangler": "^4.129.0"
   },
   "type": "module",
   "version": "0.1.0",

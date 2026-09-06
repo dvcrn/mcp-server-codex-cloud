@@ -93,7 +93,7 @@ export class AuthController {
       idToken: payload.id_token ?? current.idToken,
       lastRefresh: new Date().toISOString(),
     });
-    await this.#store.save(refreshed);
+    await this.#store.save(refreshed, current);
     return refreshed;
   }
 }

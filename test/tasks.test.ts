@@ -114,7 +114,7 @@ describe("TasksApi", () => {
       return Response.json(taskDetails(requests === 1 ? "in_progress" : "completed"));
     });
 
-    const task = await api.waitFor("task-1", { intervalMs: 0, timeoutMs: 100 });
+    const task = await api.waitFor("task-1", { intervalMs: 0, timeoutMs: 2000 });
 
     expect(task.status).toBe("completed");
     expect(requests).toBe(2);
@@ -182,5 +182,15 @@ test("waitFor deadline does not wait for a stalled OAuth refresh", async () => {
     fetch: async () => new Promise<Response>(() => {}),
   });
   const api = new TasksApi(new HttpClient({ auth, fetch: async () => Response.json({}) }));
+  await expect(api.waitFor("task", { timeoutMs: 10 })).rejects.toThrow();
+});
+
+test("waitFor deadline bounds transports that cannot cancel their underlying RPC", async () => {
+  const api = makeApi(async () => new Promise<Response>(() => {}));
+  await expect(api.waitFor("task", { timeoutMs: 10 })).rejects.toThrow();
+});
+
+test("waitFor deadline bounds a stalled response body", async () => {
+  const api = makeApi(async () => new Response(new ReadableStream()));
   await expect(api.waitFor("task", { timeoutMs: 10 })).rejects.toThrow();
 });

@@ -167,6 +167,53 @@ mise run check
 mise run pack
 ```
 
-The build uses TypeScript directly rather than bundling with esbuild. The SDK
-has no runtime dependencies, and `tsc` emits standard Node-compatible ESM plus
-declaration files. See [API.md](./API.md) for protocol details and live findings.
+See [API.md](./API.md) for SDK protocol details.
+
+## Cloudflare Worker
+
+The Worker exposes Streamable HTTP MCP at `/mcp`. Pass
+`Authorization: Bearer <ADMIN_TOKEN>` on every request. This grants full access
+to the configured Codex account, including task creation and environment changes.
+
+Deploy from this checkout after configuring your account in `wrangler.jsonc`.
+Docker must be running, and the account must support Cloudflare Containers.
+
+```bash
+mise run check
+mise run worker:deploy
+mise run worker:secret
+mise run worker:seed
+mise run worker:smoke:remote
+```
+
+`worker:secret` reads `ADMIN_TOKEN` from the production fnox profile and uploads it
+as a Wrangler secret. `worker:seed` reads `CODEX_WORKER_URL` from `mise.toml` and
+imports `~/.codex/auth.json`. Set `CODEX_AUTH_FILE` to use another login.
+Use a dedicated Codex login for the Worker: independent local and remote clients
+must not rotate copies of the same refresh token.
+
+The admin token is encrypted in `fnox.toml`. Set `FNOX_AGE_KEY_FILE` to your age
+identity when using this checkout on another machine. The deployment machine's
+identity is stored outside the repository at
+`~/.config/fnox/mcp-server-codex-cloud.age`.
+
+Credential management endpoints also require the bearer token:
+
+- `GET /admin/status` returns `{ "configured": true }` when credentials exist.
+- `POST /admin/tokens` accepts `accessToken`, `refreshToken`, and optional
+  `accountId`, `idToken`, `lastRefresh`. It replaces the stored login and never
+  returns credentials. Retry a `409` after active requests finish.
+
+Outbound Codex requests use a private Cloudflare Container because the shared
+Worker egress address is rejected by ChatGPT. Deployment caps it at one `lite`
+instance, which sleeps after 30 idle seconds. Container usage is billed separately.
+
+Rotated credentials persist in the account's Durable Object. Deploying a new
+Worker version preserves that storage. Initial login is imported from Codex;
+the Worker handles subsequent OAuth refreshes.
+
+For local Worker development, create an ignored `.dev.vars` containing a test
+`ADMIN_TOKEN` of at least 32 characters, then run `mise run worker:dev`.
+`mise run worker:smoke` uses the local test token shown in
+`scripts/smoke-worker.ts`. It verifies authentication and MCP discovery without
+calling Codex Cloud.
