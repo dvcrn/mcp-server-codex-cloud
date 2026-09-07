@@ -1,30 +1,32 @@
 # mcp-server-codex-cloud
 
-Experimental TypeScript SDK for the internal API used by `codex cloud`.
+An MCP server for running Codex Cloud tasks from your MCP client. Start tasks,
+follow up on results, inspect diffs and logs, and manage environments.
+It uses an unofficial, undocumented API that may change.
 
-> This is based on reverse-engineered, undocumented endpoints. It is not an
-> official OpenAI SDK, and the API may change without notice.
+## Run locally
 
-## MCP server
+Requires Node.js 20+ and a ChatGPT account with Codex access.
 
-Build and run from this checkout:
+Sign in first:
 
 ```bash
-mise install
-mise exec -- bun install --frozen-lockfile
-mise run build
-node dist/cli.js auth
-node dist/cli.js
+npx -y mcp-server-codex-cloud auth
 ```
 
-The server uses stdio and reads `~/.config/mcp-server-codex-cloud/auth.json`.
-Run `npx mcp-server-codex-cloud auth` after npm publication to sign in: it prints
-a verification URL and user code, polls until approval, and saves credentials
-with mode `0600`. The `auth` command and the MCP server both accept
-`--auth-file PATH`. Stop running MCP processes before replacing their login.
-Keep stdout reserved for MCP messages when running the server.
+Open the verification URL, enter the device code, and approve access. The command
+waits for approval, then saves OAuth credentials to
+`~/.config/mcp-server-codex-cloud/auth.json` with owner-only permissions (`0600`).
+Tokens refresh automatically. If prompted, enable device-code login in your
+ChatGPT security settings.
 
-After npm publication, configure an MCP client with:
+Start the stdio server:
+
+```bash
+npx -y mcp-server-codex-cloud
+```
+
+Or add it to your MCP client's configuration:
 
 ```json
 {
@@ -37,230 +39,106 @@ After npm publication, configure an MCP client with:
 }
 ```
 
-Tools: `list_environments`, `get_environment`, `list_environments_by_repository`,
-`create_environment`, `update_environment`, `list_tasks`, `start_task`, `get_task`,
-`list_sibling_turns`, `wait_for_task`, `follow_up_task`, `list_task_turns`,
-`get_task_logs`, and `refresh_auth`.
+Use `--auth-file /absolute/path/auth.json` on both commands to change the
+credential location. Stop the server before signing in again.
 
-`update_environment` accepts setup and maintenance scripts, variables, secrets,
-network settings, cache settings, and repository settings. Supplied scripts and
-maps replace existing values. `refresh_auth` persists credentials without returning
-them to the MCP client. Task creation consumes your Codex account usage.
-
-## Requirements
-
-- Node.js 20 or newer, or Bun
-- A ChatGPT-backed Codex login or another Codex backend credential
-
-Install from a local package or, once published:
+The npm package is not published yet. Until publication, run from this checkout:
 
 ```bash
-bun add mcp-server-codex-cloud
+mise install
+mise exec -- bun install --frozen-lockfile
+mise run build
+node dist/cli.js auth
+node dist/cli.js
 ```
 
-## Initialize from Codex login
+For an MCP client, use `node` as the command and the absolute path to `dist/cli.js`
+as its argument.
 
-```ts
-import { CodexCloudClient } from "mcp-server-codex-cloud";
+## What it can do
 
-const codex = await CodexCloudClient.fromCodexHome();
-const environments = await codex.environments.list();
-```
+| Capability | Tools |
+| --- | --- |
+| Find environments | `list_environments`, `get_environment`, `list_environments_by_repository` |
+| Configure environments, scripts, variables, and secrets | `create_environment`, `update_environment` |
+| Start tasks and read results or diffs | `start_task`, `list_tasks`, `get_task`, `wait_for_task` |
+| Continue tasks and inspect conversation branches | `follow_up_task`, `list_task_turns`, `list_sibling_turns` |
+| Read available per-turn logs, including setup output | `get_task_logs` |
+| Refresh saved credentials manually | `refresh_auth` |
 
-This reads `~/.codex/auth.json`. When the OAuth access token approaches expiry,
-the SDK refreshes it and atomically writes rotated tokens back with mode `0600`.
+For example, ask your MCP client to “Find my repository's environment, start a
+code review, wait for the result, then follow up asking for tests.” Task runs
+consume your Codex account usage. Environment updates replace supplied scripts
+and variable or secret maps. If a follow-up response is lost, check the turn
+history before resubmitting.
 
-## Initialize with a token store
+## Deploy to Cloudflare
 
-Use a durable secret store for disposable or horizontally scaled machines:
+Deploy from a clone of this repository. You need mise, a Cloudflare account with
+Containers support, and [Docker running locally](https://developers.cloudflare.com/containers/get-started/).
+Container usage is billed separately.
 
-```ts
-import { CodexCloudClient, type CodexTokens, type TokenStore } from "mcp-server-codex-cloud";
+1. Install dependencies and sign in to Cloudflare:
 
-const tokenStore: TokenStore = {
-  async load(): Promise<CodexTokens> {
-    return await secrets.get<CodexTokens>("codex-auth");
-  },
-  async save(tokens: CodexTokens): Promise<void> {
-    await secrets.put("codex-auth", tokens);
-  },
-};
+   ```bash
+   mise install
+   mise exec -- bun install --frozen-lockfile
+   mise exec -- bun run wrangler login
+   mise exec -- bun run wrangler whoami
+   ```
 
-const codex = new CodexCloudClient({ tokenStore });
-```
+2. Edit the included [wrangler.jsonc](./wrangler.jsonc): replace `account_id`
+   with your account ID and choose your Worker `name`. Keep the Durable Object
+   bindings, migrations, and container configuration. Wrangler provisions them
+   on deployment; no KV namespace needs to be created.
 
-`save` must atomically persist a rotated refresh token. Coordinate refreshes so
-multiple workers cannot use the same refresh token concurrently.
+3. Deploy, then set an `ADMIN_TOKEN` using a random secret of at least 32
+   characters. Paste it at Wrangler's prompt and keep it in your secret manager:
 
-For one process and an already managed credential:
+   ```bash
+   mise run worker:deploy
+   mise exec -- bun run wrangler secret put ADMIN_TOKEN
+   ```
 
-```ts
-const codex = new CodexCloudClient({
-  tokens: {
-    accessToken: process.env.CODEX_ACCESS_TOKEN!,
-    accountId: process.env.CHATGPT_ACCOUNT_ID,
-  },
-});
-```
+4. Set `CODEX_WORKER_URL` in `mise.toml` to the HTTPS URL printed by deployment.
+   In Bash or Zsh, run `read` below and paste the same admin token (input is hidden),
+   then start the Worker's device login:
 
-## Environments
+   ```bash
+   read -r -s ADMIN_TOKEN
+   export ADMIN_TOKEN
+   mise exec -- bun scripts/auth-worker.ts
+   unset ADMIN_TOKEN
+   ```
 
-```ts
-const environments = await codex.environments.list();
-const repositoryEnvironments = await codex.environments.listByRepository(
-  "dvcrn",
-  "fixmyenglish",
-);
+   Open the printed URL and approve the code. The helper waits until credentials
+   are saved in the Worker's Durable Object. They survive deployments and refresh
+   automatically. Use a separate device login for the Worker; copying refresh
+   tokens between independent clients can break token rotation. Initial container
+   provisioning can take a few minutes; retry the helper if it is not ready.
 
-const environment = await codex.environments.create({
-  label: "dummy-test",
-  repositories: [CodexCloudClient.githubRepositoryId(1165432182)],
-});
+5. Add a remote MCP server in your client with Streamable HTTP transport:
 
-await codex.environments.update(environment.id, {
-  environmentVariables: { FOO: "bar" },
-  secrets: { FOO_SECRET: "secret" },
-  setupScript: [
-    'echo "setup starting"',
-    'printf \'FOO=%s\\n\' "$FOO"',
-    'test -n "$FOO_SECRET" && echo "FOO_SECRET is set"',
-  ].join("\n"),
-  networkAccess: "unrestricted",
-  cache: { postSetupCacheEnabled: true },
-});
-```
+   ```text
+   URL: https://<worker-name>.<subdomain>.workers.dev/mcp
+   Header: Authorization: Bearer <ADMIN_TOKEN>
+   ```
 
-Environment responses expose secret names only where the backend supplies them;
-secret values are never returned by the SDK.
+   The admin token grants access to the connected Codex account. Your MCP client
+   must support sending an authorization header.
 
-## Tasks
+For your own auth UI, authenticated `POST /admin/auth/start` returns a
+`verificationUrl` and `userCode`. Poll `POST /admin/auth/status` at the returned
+`retryAfterSeconds` interval until `status` is `authenticated`, `expired`, or
+`failed`. Tokens stay in the Worker.
 
-```ts
-const created = await codex.tasks.create({
-  environmentId: environment.id,
-  branch: "main",
-  prompt: "Count words in README.md. Do not modify files.",
-});
+## SDK and credential storage
 
-console.log(created.url);
+The package also exports `CodexCloudClient`. Its credential abstraction is named
+`TokenStore`: implement `load()` and `save(tokens, previous?)`, then pass it as
+`new CodexCloudClient({ tokenStore })` to use a database or another secret store.
+The CLI uses `CodexAuthFileTokenStore`; the Worker uses `DurableTokenStore`.
 
-const result = await codex.tasks.waitFor(created.id, {
-  intervalMs: 2_000,
-  timeoutMs: 10 * 60_000,
-});
-
-console.log(result.status);
-console.log(result.messages.join("\n"));
-console.log(result.diff);
-```
-
-Task operations include:
-
-- `tasks.list()`
-- `tasks.create()`
-- `tasks.get()`
-- `tasks.listSiblingTurns()`
-- `tasks.waitFor()`
-- `tasks.followUp()`
-- `tasks.listTurns()`
-- `tasks.getLogs()`
-
-Continue an existing task from a selected assistant turn:
-
-```ts
-const history = await codex.tasks.listTurns(created.id);
-if (!history.currentTurnId) throw new Error("Task has no current turn");
-const followUp = await codex.tasks.followUp({
-  taskId: created.id,
-  turnId: history.currentTurnId,
-  prompt: "Check the result once more without modifying files.",
-});
-const logs = await codex.tasks.getLogs(followUp.id, followUp.turnId);
-```
-
-Follow-ups return `id`, `url`, `turnId`, and `userTurnId`. If a submission's
-response is lost, check `listTurns()` before submitting again to avoid duplicates.
-History returns `currentTurnId` and turns with `parentId`/`childIds`, preserving
-alternative attempts and follow-up branches. Logs contain `name`, `type`,
-`createdAt`, and `line`; timestamps retain the server's format. Call `getLogs()`
-again to retrieve updated output. The endpoint returns available per-turn logs,
-including setup output, rather than a live stream.
-
-## Development
-
-Bun manages dependencies; mise runs project tasks:
-
-```bash
-bun install
-mise run format
-mise run check
-mise run pack
-```
-
-See [API.md](./API.md) for SDK protocol details.
-
-## Cloudflare Worker
-
-The Worker exposes Streamable HTTP MCP at `/mcp`. Pass
-`Authorization: Bearer <ADMIN_TOKEN>` on every request. This grants full access
-to the configured Codex account, including task creation and environment changes.
-
-Deploy from this checkout after configuring your account in `wrangler.jsonc`.
-Docker must be running, and the account must support Cloudflare Containers.
-
-```bash
-mise run check
-mise run worker:deploy
-mise run worker:secret
-mise run worker:auth
-mise run worker:smoke:remote
-```
-
-`worker:secret` reads `ADMIN_TOKEN` from the production fnox profile and uploads it
-as a Wrangler secret. `worker:auth` reads `CODEX_WORKER_URL` from `mise.toml`,
-prints a verification URL and user code, and polls until the Worker stores the
-new login. Approve the code in your browser. Tokens never pass through the terminal.
-The pending code expires after 15 minutes; rerun the command to resume polling
-or start again after expiry. OpenAI may require enabling device-code login in
-your ChatGPT security settings.
-
-To import an existing login instead, `worker:seed` reads `~/.codex/auth.json`;
-set `CODEX_AUTH_FILE` to use another file. Independent local and remote clients
-must not rotate copies of the same refresh token. Use `worker:auth` to give the
-Worker its own login.
-
-The admin token is encrypted in `fnox.toml`. Set `FNOX_AGE_KEY_FILE` to your age
-identity when using this checkout on another machine. The deployment machine's
-identity is stored outside the repository at
-`~/.config/fnox/mcp-server-codex-cloud.age`.
-
-Credential management endpoints also require the bearer token:
-
-- `GET /admin/status` returns `{ "configured": true }` when credentials exist.
-- `POST /admin/auth/start` starts a device login, or returns the current pending code.
-  It returns `status`, `verificationUrl`, `userCode`, `expiresAt`, and `retryAfterSeconds`.
-- `POST /admin/auth/status` polls OpenAI when the polling interval allows it.
-  Keep calling it until `status` is `authenticated`, `expired`, or `failed`.
-  Pending responses include the same fields as `start`; terminal responses contain
-  only `status`. `idle` means no device login has been started.
-- `GET /admin/auth/status` reads the saved login status without polling OpenAI.
-  Polling happens on requests; no background listener continues after the helper exits.
-  Device endpoints take no request body. Retry `409` when the account is busy.
-- `POST /admin/tokens` accepts `accessToken`, `refreshToken`, and optional
-  `accountId`, `idToken`, `lastRefresh`. It replaces the stored login and never
-  returns credentials. Retry a `409` after active requests finish.
-
-Outbound Codex requests use a private Cloudflare Container because the shared
-Worker egress address is rejected by ChatGPT. Deployment caps it at one `lite`
-instance, which sleeps after 30 idle seconds. Container usage is billed separately.
-
-Rotated credentials persist in the account's Durable Object. Deploying a new
-Worker version preserves that storage. Device login stores new credentials there,
-and the Worker handles subsequent OAuth refreshes. Existing credentials remain
-active until a new device login succeeds.
-
-For local Worker development, create an ignored `.dev.vars` containing a test
-`ADMIN_TOKEN` of at least 32 characters, then run `mise run worker:dev`.
-`mise run worker:smoke` uses the local test token shown in
-`scripts/smoke-worker.ts`. It verifies authentication and MCP discovery without
-calling Codex Cloud.
+Persist rotated tokens atomically, reject stale writes, and coordinate refreshes
+across clients sharing credentials. See [API.md](./API.md) for protocol details
+and [src/token-store.ts](./src/token-store.ts) for the interface.
