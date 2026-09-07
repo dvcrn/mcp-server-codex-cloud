@@ -9,7 +9,6 @@ if (url.protocol !== "https:" || url.username || url.password)
 const authFile = process.env.CODEX_AUTH_FILE;
 const store = new CodexAuthFileTokenStore(authFile ? { authFile } : {});
 const tokens = await store.load();
-if (!tokens.refreshToken) throw new Error("The Codex login must contain a refresh token");
 const response = await fetch(url, {
   method: "POST",
   redirect: "error",
@@ -17,6 +16,4 @@ const response = await fetch(url, {
   body: JSON.stringify(tokens),
 });
 if (!response.ok) throw new Error(`Credential seeding failed with HTTP ${response.status}`);
-console.log(
-  "Worker credentials seeded. Use a dedicated Codex login for the Worker to avoid refresh races with local clients.",
-);
+console.log("Worker credentials saved in KV. Reseed when the access token expires.");

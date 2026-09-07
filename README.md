@@ -74,9 +74,9 @@ history before resubmitting.
 
 ## Deploy to Cloudflare
 
-Deploy from a clone of this repository. You need mise, a Cloudflare account with
-Containers support, and [Docker running locally](https://developers.cloudflare.com/containers/get-started/).
-Container usage is billed separately.
+Deploy from a clone of this repository with mise and a Cloudflare account.
+The server uses a Worker and a KV namespace. Upstream requests use Worker fetch;
+ChatGPT may reject these requests with HTTP 403.
 
 1. Install dependencies and sign in to Cloudflare:
 
@@ -88,9 +88,12 @@ Container usage is billed separately.
    ```
 
 2. Edit the included [wrangler.jsonc](./wrangler.jsonc): replace `account_id`
-   with your account ID and choose your Worker `name`. Keep the Durable Object
-   bindings, migrations, and container configuration. Wrangler provisions them
-   on deployment; no KV namespace needs to be created.
+   with your account ID and choose your Worker `name`. Create a KV namespace
+   and set its ID on the `CODEX_AUTH` binding:
+
+   ```bash
+   mise exec -- bun run wrangler kv namespace create CODEX_AUTH
+   ```
 
 3. Deploy, then set an `ADMIN_TOKEN` using a random secret of at least 32
    characters. Paste it at Wrangler's prompt and keep it in your secret manager:
@@ -102,7 +105,7 @@ Container usage is billed separately.
 
 4. Set `CODEX_WORKER_URL` in `mise.toml` to the HTTPS URL printed by deployment.
    In Bash or Zsh, run `read` below and paste the same admin token (input is hidden),
-   then start the Worker's device login:
+   then start a local device login and upload its credentials:
 
    ```bash
    read -r -s ADMIN_TOKEN
@@ -111,11 +114,10 @@ Container usage is billed separately.
    unset ADMIN_TOKEN
    ```
 
-   Open the printed URL and approve the code. The helper waits until credentials
-   are saved in the Worker's Durable Object. They survive deployments and refresh
-   automatically. Use a separate device login for the Worker; copying refresh
-   tokens between independent clients can break token rotation. Initial container
-   provisioning can take a few minutes; retry the helper if it is not ready.
+   Open the printed URL and approve the code. The helper saves the credentials
+   in Worker KV. Run it again when the access token expires, or use
+   `mise run worker:seed` to upload credentials from your local Codex login.
+   KV updates can take 60 seconds or more to propagate.
 
 5. Add a remote MCP server in your client with Streamable HTTP transport:
 
@@ -127,17 +129,18 @@ Container usage is billed separately.
    The admin token grants access to the connected Codex account. Your MCP client
    must support sending an authorization header.
 
-For your own auth UI, authenticated `POST /admin/auth/start` returns a
-`verificationUrl` and `userCode`. Poll `POST /admin/auth/status` at the returned
-`retryAfterSeconds` interval until `status` is `authenticated`, `expired`, or
-`failed`. Tokens stay in the Worker.
+Authenticated `POST /admin/tokens` accepts an `accessToken` and optional
+`accountId`, `refreshToken`, `idToken`, and `lastRefresh`. `GET /admin/status`
+reports whether credentials are stored. The Worker does not refresh OAuth tokens
+automatically because KV cannot coordinate token rotation across requests.
 
 ## SDK and credential storage
 
 The package also exports `CodexCloudClient`. Its credential abstraction is named
 `TokenStore`: implement `load()` and `save(tokens, previous?)`, then pass it as
 `new CodexCloudClient({ tokenStore })` to use a database or another secret store.
-The CLI uses `CodexAuthFileTokenStore`; the Worker uses `DurableTokenStore`.
+The CLI uses `CodexAuthFileTokenStore`; the Worker uses `KvTokenStore` with
+automatic refresh disabled.
 
 Persist rotated tokens atomically, reject stale writes, and coordinate refreshes
 across clients sharing credentials. See [API.md](./API.md) for protocol details

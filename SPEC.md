@@ -1,17 +1,19 @@
-# Spec: Codex Cloud TypeScript SDK
+# Spec: Codex Cloud MCP server
 
 ## Objective
 
-Build an experimental TypeScript SDK named `codex` for the internal API used by
-`codex cloud`. It must support local Codex credentials and externally persisted
-tokens, environment management, and cloud task execution without exposing
-credentials in logs or process arguments.
+Expose the internal API used by `codex cloud` as an MCP server, over stdio for
+local clients and over HTTP from a Cloudflare Worker. The underlying TypeScript
+client is also published as a library. It must support local Codex credentials
+and externally persisted tokens, environment management, and cloud task
+execution without exposing credentials in logs or process arguments.
 
 ## Tech stack
 
 - TypeScript 7
 - ESM targeting modern Node.js
-- Native `fetch`; no runtime dependencies
+- Native `fetch` for transport
+- Runtime dependencies: `@modelcontextprotocol/server`, `zod`, `proper-lockfile`
 - Bun for dependency management and tests
 - TypeScript compiler for JavaScript and declaration output
 - Biome for formatting and linting
@@ -27,7 +29,9 @@ credentials in logs or process arguments.
 
 ## Project structure
 
-- `src/`: SDK source
+- `src/`: client, MCP server, and CLI entry point
+- `worker/`: Cloudflare Worker deployment and KV credential storage
+- `scripts/`: deployment, credential seeding, and smoke checks
 - `test/`: mocked unit tests
 - `examples/`: runnable examples
 - `dist/`: generated ESM and declarations
@@ -40,8 +44,9 @@ credentials in logs or process arguments.
 - Auth refresh occurs before expiration and persists rotated credentials through
   the configured token store.
 - Environments: list globally/by repository, get by ID, create, and patch.
-- Tasks: list, create, retrieve details, list sibling turns, wait for completion,
-  and extract assistant text or unified diffs.
+- Tasks: list, create, follow up, retrieve details, list turns and sibling turns,
+  read logs, wait for completion, and extract assistant text or unified diffs.
+- MCP: the same operations are exposed as tools by `createMcpServer`.
 
 ## Code style
 

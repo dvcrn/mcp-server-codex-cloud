@@ -6,18 +6,6 @@
   "compatibility_date": "2026-09-06",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "CODEX_ACCOUNT",
-        "class_name": "CodexAccount"
-      },
-      {
-        "name": "CODEX_EGRESS",
-        "class_name": "CodexEgress"
-      }
-    ]
-  },
   "migrations": [
     {
       "tag": "v1",
@@ -26,18 +14,19 @@
     {
       "tag": "v2",
       "new_sqlite_classes": ["CodexEgress"]
+    },
+    {
+      "tag": "v3",
+      "deleted_classes": ["CodexAccount", "CodexEgress"]
     }
   ],
   "observability": {
     "enabled": false
   },
-  "containers": [
+  "kv_namespaces": [
     {
-      "class_name": "CodexEgress",
-      "image": "./container/Dockerfile",
-      "image_build_context": "./container",
-      "instance_type": "lite",
-      "max_instances": 1
+      "binding": "CODEX_AUTH",
+      "id": "179d6d51004e46898f0d40385f88f1f4"
     }
   ]
 }
