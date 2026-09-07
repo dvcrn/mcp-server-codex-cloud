@@ -55,6 +55,9 @@ run = "fnox exec --profile production --no-defaults -- bun scripts/upload-secret
 [tasks."worker:seed"]
 run = "fnox exec --profile production --no-defaults -- bun scripts/seed-worker.ts"
 
+[tasks."worker:auth"]
+run = "fnox exec --profile production --no-defaults -- bun scripts/auth-worker.ts"
+
 [tasks."worker:smoke"]
 env = { CODEX_WORKER_URL = "http://127.0.0.1:8787" }
 run = "bun scripts/smoke-worker.ts"

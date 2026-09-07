@@ -6,7 +6,8 @@ export class DurableTokenStore implements TokenStore {
 
   async load(): Promise<CodexTokens> {
     const tokens = await this.storage.get<CodexTokens>("tokens");
-    if (!tokens) throw new AuthenticationError("Seed Codex credentials through /admin/tokens");
+    if (!tokens)
+      throw new AuthenticationError("Sign in through /admin/auth/start or seed /admin/tokens");
     return tokens;
   }
 

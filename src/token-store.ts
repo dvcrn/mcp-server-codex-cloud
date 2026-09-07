@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import lockfile from "proper-lockfile";
 import { AuthenticationError } from "./errors.js";
 
 export interface CodexTokens {
@@ -73,9 +74,30 @@ export class CodexAuthFileTokenStore implements TokenStore {
     });
   }
 
-  public async save(tokens: CodexTokens): Promise<void> {
-    const auth = await this.#read();
-    const existing = auth.tokens ?? {};
+  public async save(tokens: CodexTokens, previous?: CodexTokens): Promise<void> {
+    await mkdir(dirname(this.authFile), { recursive: true, mode: 0o700 });
+    const release = await lockfile.lock(this.authFile, {
+      realpath: false,
+      retries: { retries: 50, minTimeout: 100, maxTimeout: 250 },
+    });
+    try {
+      await this.#write(tokens, previous);
+    } finally {
+      await release();
+    }
+  }
+
+  async #write(tokens: CodexTokens, previous?: CodexTokens): Promise<void> {
+    const auth = await this.#read(true);
+    if (
+      previous &&
+      (auth.tokens?.access_token !== previous.accessToken ||
+        auth.tokens?.refresh_token !== previous.refreshToken)
+    )
+      throw new AuthenticationError("Credentials changed during refresh; retry the request");
+    const existing = { ...auth.tokens };
+    for (const key of ["access_token", "refresh_token", "account_id", "id_token"])
+      delete existing[key];
     auth.tokens = {
       ...existing,
       access_token: tokens.accessToken,
@@ -86,7 +108,6 @@ export class CodexAuthFileTokenStore implements TokenStore {
     auth.last_refresh = tokens.lastRefresh ?? new Date().toISOString();
 
     const directory = dirname(this.authFile);
-    await mkdir(directory, { recursive: true, mode: 0o700 });
     const temporary = join(directory, `.auth.${process.pid}.${crypto.randomUUID()}.tmp`);
     try {
       await writeFile(temporary, `${JSON.stringify(auth, null, 2)}\n`, { mode: 0o600 });
@@ -100,13 +121,21 @@ export class CodexAuthFileTokenStore implements TokenStore {
     }
   }
 
-  async #read(): Promise<CodexAuthFile> {
+  async #read(allowMissing = false): Promise<CodexAuthFile> {
     try {
       const value: unknown = JSON.parse(await readFile(this.authFile, "utf8"));
       if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("Expected an auth object");
       return value as CodexAuthFile;
     } catch (error) {
+      if (
+        allowMissing &&
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === "ENOENT"
+      )
+        return { auth_mode: "chatgpt" };
       throw new AuthenticationError(`Could not read Codex credentials: ${cause(error)}`);
     }
   }

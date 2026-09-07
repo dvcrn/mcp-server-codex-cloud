@@ -13,11 +13,16 @@ Build and run from this checkout:
 mise install
 mise exec -- bun install --frozen-lockfile
 mise run build
+node dist/cli.js auth
 node dist/cli.js
 ```
 
-The server uses stdio and reads `~/.codex/auth.json`. Use `--auth-file PATH`
-for a different Codex login. Keep stdout reserved for MCP messages.
+The server uses stdio and reads `~/.config/mcp-server-codex-cloud/auth.json`.
+Run `npx mcp-server-codex-cloud auth` after npm publication to sign in: it prints
+a verification URL and user code, polls until approval, and saves credentials
+with mode `0600`. The `auth` command and the MCP server both accept
+`--auth-file PATH`. Stop running MCP processes before replacing their login.
+Keep stdout reserved for MCP messages when running the server.
 
 After npm publication, configure an MCP client with:
 
@@ -182,15 +187,22 @@ Docker must be running, and the account must support Cloudflare Containers.
 mise run check
 mise run worker:deploy
 mise run worker:secret
-mise run worker:seed
+mise run worker:auth
 mise run worker:smoke:remote
 ```
 
 `worker:secret` reads `ADMIN_TOKEN` from the production fnox profile and uploads it
-as a Wrangler secret. `worker:seed` reads `CODEX_WORKER_URL` from `mise.toml` and
-imports `~/.codex/auth.json`. Set `CODEX_AUTH_FILE` to use another login.
-Use a dedicated Codex login for the Worker: independent local and remote clients
-must not rotate copies of the same refresh token.
+as a Wrangler secret. `worker:auth` reads `CODEX_WORKER_URL` from `mise.toml`,
+prints a verification URL and user code, and polls until the Worker stores the
+new login. Approve the code in your browser. Tokens never pass through the terminal.
+The pending code expires after 15 minutes; rerun the command to resume polling
+or start again after expiry. OpenAI may require enabling device-code login in
+your ChatGPT security settings.
+
+To import an existing login instead, `worker:seed` reads `~/.codex/auth.json`;
+set `CODEX_AUTH_FILE` to use another file. Independent local and remote clients
+must not rotate copies of the same refresh token. Use `worker:auth` to give the
+Worker its own login.
 
 The admin token is encrypted in `fnox.toml`. Set `FNOX_AGE_KEY_FILE` to your age
 identity when using this checkout on another machine. The deployment machine's
@@ -200,6 +212,15 @@ identity is stored outside the repository at
 Credential management endpoints also require the bearer token:
 
 - `GET /admin/status` returns `{ "configured": true }` when credentials exist.
+- `POST /admin/auth/start` starts a device login, or returns the current pending code.
+  It returns `status`, `verificationUrl`, `userCode`, `expiresAt`, and `retryAfterSeconds`.
+- `POST /admin/auth/status` polls OpenAI when the polling interval allows it.
+  Keep calling it until `status` is `authenticated`, `expired`, or `failed`.
+  Pending responses include the same fields as `start`; terminal responses contain
+  only `status`. `idle` means no device login has been started.
+- `GET /admin/auth/status` reads the saved login status without polling OpenAI.
+  Polling happens on requests; no background listener continues after the helper exits.
+  Device endpoints take no request body. Retry `409` when the account is busy.
 - `POST /admin/tokens` accepts `accessToken`, `refreshToken`, and optional
   `accountId`, `idToken`, `lastRefresh`. It replaces the stored login and never
   returns credentials. Retry a `409` after active requests finish.
@@ -209,8 +230,9 @@ Worker egress address is rejected by ChatGPT. Deployment caps it at one `lite`
 instance, which sleeps after 30 idle seconds. Container usage is billed separately.
 
 Rotated credentials persist in the account's Durable Object. Deploying a new
-Worker version preserves that storage. Initial login is imported from Codex;
-the Worker handles subsequent OAuth refreshes.
+Worker version preserves that storage. Device login stores new credentials there,
+and the Worker handles subsequent OAuth refreshes. Existing credentials remain
+active until a new device login succeeds.
 
 For local Worker development, create an ignored `.dev.vars` containing a test
 `ADMIN_TOKEN` of at least 32 characters, then run `mise run worker:dev`.

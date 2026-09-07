@@ -39,6 +39,12 @@ test("private egress restricts destinations and strips unrelated headers", async
       (await fetch(`${base}/oauth/token`, { method: "POST", body: "x".repeat(1048577) })).status,
     ).toBe(413);
     expect(calls).toHaveLength(2);
+    for (const path of ["/api/accounts/deviceauth/usercode", "/api/accounts/deviceauth/token"]) {
+      expect((await fetch(base + path)).status).toBe(404);
+      expect((await fetch(base + path, { method: "POST", body: "{}" })).status).toBe(200);
+      expect(calls.at(-1).url).toBe(`https://auth.openai.com${path}`);
+    }
+    expect(calls).toHaveLength(4);
   } finally {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));

@@ -8,8 +8,15 @@ export function createEgressServer(upstreamFetch = fetch) {
     try {
       const path = new URL(request.url, "http://container");
       let target;
-      if (path.pathname === "/oauth/token" && request.method === "POST") {
-        target = new URL("https://auth.openai.com/oauth/token");
+      if (
+        [
+          "/oauth/token",
+          "/api/accounts/deviceauth/usercode",
+          "/api/accounts/deviceauth/token",
+        ].includes(path.pathname) &&
+        request.method === "POST"
+      ) {
+        target = new URL(path.pathname, "https://auth.openai.com");
       } else if (
         path.pathname.startsWith("/backend-api/wham/") &&
         ["GET", "POST", "PATCH"].includes(request.method)

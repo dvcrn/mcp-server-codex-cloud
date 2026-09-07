@@ -4,7 +4,13 @@ import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/cli
 const base = process.env.CODEX_WORKER_URL ?? "http://127.0.0.1:8787";
 const token = process.env.ADMIN_TOKEN ?? "local-test-token-not-a-production-secret-12345";
 const endpoint = new URL("/mcp", base);
-for (const path of ["/mcp", "/admin/status", "/admin/tokens"]) {
+for (const path of [
+  "/mcp",
+  "/admin/status",
+  "/admin/tokens",
+  "/admin/auth/start",
+  "/admin/auth/status",
+]) {
   assert.equal((await fetch(new URL(path, base))).status, 401);
 }
 const headers = { authorization: `Bearer ${token}`, "content-type": "application/json" };

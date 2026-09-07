@@ -1,8 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import type { Fetch } from "../src/auth.js";
 import { CodexCloudClient } from "../src/client.js";
+import { DeviceAuth } from "../src/device-auth.js";
 import { createMcpServer } from "../src/mcp.js";
+import { DurableDeviceAuthStore } from "./device-auth-store.js";
 import type { CodexEgress } from "./egress.js";
 
 export { CodexEgress } from "./egress.js";
@@ -25,17 +28,19 @@ const tokenSchema = z.strictObject({
 
 export class CodexAccount extends DurableObject<Env> {
   readonly #store = new DurableTokenStore(this.ctx.storage);
+  readonly #fetch: Fetch = async (input, init) => {
+    const upstream = new URL(String(input));
+    if (upstream.hostname !== "chatgpt.com" && upstream.hostname !== "auth.openai.com")
+      throw new Error("Unsupported upstream");
+    const target = new URL(upstream.pathname + upstream.search, "http://container");
+    return this.env.CODEX_EGRESS.getByName("owner").fetch(new Request(target, init));
+  };
   readonly #client = new CodexCloudClient({
     tokenStore: this.#store,
     userAgent: "codex-cli",
-    fetch: async (input, init) => {
-      const upstream = new URL(String(input));
-      if (upstream.hostname !== "chatgpt.com" && upstream.hostname !== "auth.openai.com")
-        throw new Error("Unsupported upstream");
-      const target = new URL(upstream.pathname + upstream.search, "http://container");
-      return this.env.CODEX_EGRESS.getByName("owner").fetch(new Request(target, init));
-    },
+    fetch: this.#fetch,
   });
+  readonly #deviceAuth = new DeviceAuth(new DurableDeviceAuthStore(this.ctx.storage), this.#fetch);
   #active = 0;
   #seeding = false;
 
@@ -72,8 +77,21 @@ export class CodexAccount extends DurableObject<Env> {
       return reply("Account is busy; retry seeding after requests complete", 409);
     this.#seeding = true;
     try {
-      await this.#store.save(parsed.data);
+      await this.ctx.storage.transaction(async (transaction) => {
+        await transaction.put("tokens", parsed.data);
+        await transaction.delete("device-auth");
+      });
       return Response.json({ stored: true });
+    } finally {
+      this.#seeding = false;
+    }
+  }
+
+  async deviceAuth(action: "start" | "poll" | "status"): Promise<Response> {
+    if (this.#active || this.#seeding) return reply("Account is busy; retry shortly", 409);
+    this.#seeding = true;
+    try {
+      return Response.json(await this.#deviceAuth[action]());
     } finally {
       this.#seeding = false;
     }
@@ -102,6 +120,21 @@ export default {
     try {
       if (url.pathname === "/admin/status" && request.method === "GET")
         return secure(await account.status());
+      if (url.pathname === "/admin/auth/start" || url.pathname === "/admin/auth/status") {
+        if (url.pathname === "/admin/auth/status" && request.method === "GET")
+          return secure(await account.deviceAuth("status"));
+        if (request.method !== "POST")
+          return new Response("Method not allowed", {
+            status: 405,
+            headers: {
+              Allow: url.pathname.endsWith("status") ? "GET, POST" : "POST",
+              "Cache-Control": "no-store",
+            },
+          });
+        if ((await limitedBody(request, 1024)) === null)
+          return reply("Request body too large", 413);
+        return secure(await account.deviceAuth(url.pathname.endsWith("start") ? "start" : "poll"));
+      }
       if (url.pathname !== "/mcp" && url.pathname !== "/admin/tokens")
         return reply("Not found", 404);
       if (request.method !== "POST")
