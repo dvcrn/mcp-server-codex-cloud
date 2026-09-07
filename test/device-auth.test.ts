@@ -68,6 +68,7 @@ test("device login resumes, throttles polls, exchanges once and never returns cr
   expect(await resumed.poll()).toEqual({ status: "authenticated" });
   expect(await resumed.poll()).toEqual({ status: "authenticated" });
   expect(f.calls).toHaveLength(4);
+  expect(f.calls.every((call) => call.init?.redirect === "manual")).toBe(true);
   expect(f.calls.map((call) => call.url)).toEqual([
     "https://auth.openai.com/api/accounts/deviceauth/usercode",
     "https://auth.openai.com/api/accounts/deviceauth/token",
@@ -93,6 +94,16 @@ test("device login resumes, throttles polls, exchanges once and never returns cr
   });
   expect(f.session()).toEqual({ status: "authenticated" });
   expect(JSON.stringify(initial)).not.toContain("private-device");
+});
+
+test("device auth refuses upstream redirects without exposing their destination", async () => {
+  const f = fixture([
+    new Response(null, { status: 302, headers: { location: "https://example.com/private" } }),
+  ]);
+  await expect(f.auth.start()).rejects.toThrow(
+    "Device authorization could not be started (HTTP 302)",
+  );
+  expect(f.tokens().accessToken).toBe("existing");
 });
 
 test("slow_down persists increased interval across restarts and expires without polling", async () => {

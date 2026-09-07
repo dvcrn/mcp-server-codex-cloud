@@ -3,7 +3,7 @@ import { createMcpHandler } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { Fetch } from "../src/auth.js";
 import { CodexCloudClient } from "../src/client.js";
-import { DeviceAuth } from "../src/device-auth.js";
+import { DeviceAuth, DeviceAuthError } from "../src/device-auth.js";
 import { createMcpServer } from "../src/mcp.js";
 import { DurableDeviceAuthStore } from "./device-auth-store.js";
 import type { CodexEgress } from "./egress.js";
@@ -92,6 +92,9 @@ export class CodexAccount extends DurableObject<Env> {
     this.#seeding = true;
     try {
       return Response.json(await this.#deviceAuth[action]());
+    } catch (error) {
+      if (error instanceof DeviceAuthError) return reply(error.message, 502);
+      throw error;
     } finally {
       this.#seeding = false;
     }

@@ -47,6 +47,8 @@ export interface DeviceAuthStore {
   complete(tokens: CodexTokens): Promise<void>;
 }
 
+export class DeviceAuthError extends Error {}
+
 // Callers serialize operations to protect one-use authorization code exchanges.
 export class DeviceAuth {
   constructor(
@@ -59,9 +61,12 @@ export class DeviceAuth {
     const current = await this.status();
     if (current.status === "pending") return current;
     const response = await this.post("/api/accounts/deviceauth/usercode", { client_id: clientId });
-    if (!response.ok) throw new Error("Device authorization could not be started");
-    const parsed = startSchema.safeParse(await response.json());
-    if (!parsed.success) throw new Error("Invalid device authorization response");
+    if (!response.ok)
+      throw new DeviceAuthError(
+        `Device authorization could not be started (HTTP ${response.status})`,
+      );
+    const parsed = startSchema.safeParse(await response.json().catch(() => null));
+    if (!parsed.success) throw new DeviceAuthError("Invalid device authorization response");
     const rawInterval = Number(parsed.data.interval ?? 5);
     const intervalMs =
       Number.isFinite(rawInterval) && rawInterval > 0
@@ -124,7 +129,7 @@ export class DeviceAuth {
     await this.finish("failed");
     const tokenResponse = await this.upstreamFetch(`${authBase}/oauth/token`, {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(30_000),
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({
@@ -179,7 +184,7 @@ export class DeviceAuth {
   private post(path: string, body: Record<string, string>): Promise<Response> {
     return this.upstreamFetch(`${authBase}${path}`, {
       method: "POST",
-      redirect: "error",
+      redirect: "manual",
       signal: AbortSignal.timeout(30_000),
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
