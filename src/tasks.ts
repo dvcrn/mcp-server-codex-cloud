@@ -1,5 +1,13 @@
 import { CodexCloudError } from "./errors.js";
 import type { HttpClient } from "./http.js";
+import {
+  mapAttempt,
+  mapTaskDetails,
+  mapTaskHistory,
+  mapTaskLogs,
+  mapTaskSummary,
+  type TaskListItemWire,
+} from "./task-mappers.js";
 
 export type TaskStatus =
   | "pending"
@@ -54,6 +62,40 @@ export interface CreateTaskInput {
 export interface CreatedTask {
   id: string;
   url: string;
+}
+
+export interface FollowUpTaskInput {
+  taskId: string;
+  turnId: string;
+  prompt: string;
+  /** Whether to run the environment in QA mode. @default false */
+  qaMode?: boolean;
+}
+
+export interface CreatedTaskTurn extends CreatedTask {
+  turnId: string;
+  userTurnId: string;
+}
+
+export interface TaskTurn extends Omit<TaskAttempt, "status"> {
+  status: TaskStatus | null;
+  parentId: string | null;
+  childIds: string[];
+  role: string | null;
+  environmentId: string | null;
+}
+
+export interface TaskHistory {
+  currentTurnId: string | null;
+  turns: TaskTurn[];
+}
+
+export interface TaskLogEntry {
+  name: string;
+  type: string;
+  /** Upstream timestamp, preserved because it has no timezone offset. */
+  createdAt: string;
+  line: string;
 }
 
 export interface TaskError {
@@ -164,6 +206,72 @@ export class TasksApi {
     return mapTaskDetails(id, response);
   }
 
+  public async followUp(
+    input: FollowUpTaskInput,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CreatedTaskTurn> {
+    segment(input.taskId);
+    segment(input.turnId);
+    if (!input.prompt.trim()) throw new CodexCloudError("Prompt must not be empty");
+    const response = await this.http.request<{
+      task?: { id?: string };
+      turn?: { id?: string };
+      user_turn?: { id?: string };
+    }>("/tasks", {
+      method: "POST",
+      signal: options.signal,
+      body: {
+        follow_up: {
+          task_id: input.taskId,
+          turn_id: input.turnId,
+          run_environment_in_qa_mode: input.qaMode ?? false,
+        },
+        input_items: [
+          {
+            type: "message",
+            role: "user",
+            content: [{ content_type: "text", text: input.prompt }],
+          },
+        ],
+      },
+    });
+    const turnId = response?.turn?.id;
+    const userTurnId = response?.user_turn?.id;
+    if (
+      response?.task?.id !== input.taskId ||
+      typeof turnId !== "string" ||
+      !turnId ||
+      typeof userTurnId !== "string" ||
+      !userTurnId
+    )
+      throw new CodexCloudError(
+        "Follow-up response did not contain the expected task and turn IDs",
+      );
+    return { id: input.taskId, url: taskUrl(this.http.baseUrl, input.taskId), turnId, userTurnId };
+  }
+
+  public async listTurns(
+    taskId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TaskHistory> {
+    return mapTaskHistory(
+      await this.http.request<unknown>(`/tasks/${segment(taskId)}/turns`, options),
+    );
+  }
+
+  public async getLogs(
+    taskId: string,
+    turnId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<TaskLogEntry[]> {
+    return mapTaskLogs(
+      await this.http.request<unknown>(
+        `/tasks/${segment(taskId)}/turns/${segment(turnId)}/logs`,
+        options,
+      ),
+    );
+  }
+
   public async listSiblingTurns(
     taskId: string,
     turnId: string,
@@ -211,14 +319,6 @@ interface TaskListWire {
   cursor?: string | null;
 }
 
-interface TaskListItemWire {
-  id: string;
-  title?: string;
-  updated_at?: number;
-  pull_requests?: unknown[] | null;
-  task_status_display?: Record<string, unknown> | null;
-}
-
 interface CreateTaskResponseWire {
   id?: string;
   task?: { id?: string };
@@ -226,142 +326,6 @@ interface CreateTaskResponseWire {
 
 interface SiblingTurnsWire {
   sibling_turns?: Record<string, unknown>[];
-}
-
-function mapTaskSummary(wire: TaskListItemWire): TaskSummary {
-  const display = object(wire.task_status_display);
-  const latest = object(display?.latest_turn_status_display);
-  const stats = object(latest?.diff_stats);
-  const siblings = array(latest?.sibling_turn_ids);
-  return {
-    id: wire.id,
-    title: wire.title ?? "<untitled>",
-    status: normalizeStatus(string(latest?.turn_status) ?? string(display?.state)),
-    updatedAt: timestamp(
-      wire.updated_at ?? number(latest?.updated_at) ?? number(latest?.created_at),
-    ),
-    environmentLabel: string(display?.environment_label) ?? null,
-    diffStats: {
-      filesChanged: number(stats?.files_modified) ?? 0,
-      linesAdded: number(stats?.lines_added) ?? 0,
-      linesRemoved: number(stats?.lines_removed) ?? 0,
-    },
-    isReview: Array.isArray(wire.pull_requests) && wire.pull_requests.length > 0,
-    attemptCount: siblings ? siblings.length + 1 : null,
-  };
-}
-
-function mapTaskDetails(id: string, wire: Record<string, unknown>): TaskDetails {
-  const task = object(wire.task);
-  const assistant = object(wire.current_assistant_turn);
-  const diffTurn = object(wire.current_diff_task_turn);
-  const user = object(wire.current_user_turn);
-  const active = assistant ?? diffTurn;
-  const display = object(wire.task_status_display) ?? object(task?.task_status_display);
-  const latest = object(display?.latest_turn_status_display);
-  const messages = [...messagesFromTurn(diffTurn), ...messagesFromTurn(assistant)];
-  const fallbackMessages = messages.length === 0 ? worklogMessages(assistant) : [];
-  const error = object(active?.error);
-  return {
-    id: string(task?.id) ?? id,
-    title: string(task?.title) ?? null,
-    environmentId: string(task?.environment_id) ?? null,
-    status: normalizeStatus(
-      string(active?.turn_status) ?? string(latest?.turn_status) ?? string(display?.state),
-    ),
-    prompt: userPrompt(user),
-    messages: messages.length > 0 ? messages : fallbackMessages,
-    diff: diffFromTurn(diffTurn) ?? diffFromTurn(assistant),
-    turnId: string(active?.id) ?? null,
-    siblingTurnIds: strings(active?.sibling_turn_ids),
-    attemptPlacement: number(active?.attempt_placement) ?? null,
-    error: error
-      ? { code: string(error.code) ?? null, message: string(error.message) ?? null }
-      : null,
-    raw: wire,
-  };
-}
-
-function mapAttempt(wire: Record<string, unknown>): TaskAttempt {
-  return {
-    id: string(wire.id) ?? "",
-    status: normalizeStatus(string(wire.turn_status)),
-    attemptPlacement: number(wire.attempt_placement) ?? null,
-    createdAt: timestamp(number(wire.created_at)),
-    messages: messagesFromTurn(wire),
-    diff: diffFromTurn(wire),
-  };
-}
-
-function messagesFromTurn(turn: Record<string, unknown> | undefined): string[] {
-  if (!turn) return [];
-  const messages: string[] = [];
-  for (const item of objects(turn.output_items)) {
-    if (item.type !== "message") continue;
-    messages.push(...textContent(item.content));
-  }
-  return messages;
-}
-
-function worklogMessages(turn: Record<string, unknown> | undefined): string[] {
-  const worklog = object(turn?.worklog);
-  const messages: string[] = [];
-  for (const item of objects(worklog?.messages)) {
-    if (string(object(item.author)?.role) !== "assistant") continue;
-    messages.push(...textContent(object(item.content)?.parts));
-  }
-  return messages;
-}
-
-function userPrompt(turn: Record<string, unknown> | undefined): string | null {
-  if (!turn) return null;
-  for (const item of [...objects(turn.input_items), ...objects(turn.output_items)]) {
-    if (item.type === "message" && (item.role === "user" || item.role === undefined)) {
-      const text = textContent(item.content);
-      if (text.length > 0) return text.join("\n");
-    }
-  }
-  return null;
-}
-
-function diffFromTurn(turn: Record<string, unknown> | undefined): string | null {
-  if (!turn) return null;
-  for (const item of objects(turn.output_items)) {
-    if (item.type === "output_diff" && typeof item.diff === "string" && item.diff) return item.diff;
-    const outputDiff = object(item.output_diff);
-    if (item.type === "pr" && typeof outputDiff?.diff === "string" && outputDiff.diff) {
-      return outputDiff.diff;
-    }
-  }
-  return null;
-}
-
-function textContent(value: unknown): string[] {
-  const output: string[] = [];
-  for (const part of array(value) ?? []) {
-    if (typeof part === "string" && part.trim()) output.push(part);
-    const content = object(part);
-    if (content?.content_type === "text" && typeof content.text === "string" && content.text) {
-      output.push(content.text);
-    }
-  }
-  return output;
-}
-
-function normalizeStatus(value: string | undefined): TaskStatus {
-  switch (value) {
-    case "pending":
-    case "in_progress":
-    case "completed":
-    case "failed":
-    case "cancelled":
-    case "ready":
-    case "applied":
-    case "error":
-      return value;
-    default:
-      return "unknown";
-  }
 }
 
 function isTerminal(status: TaskStatus): boolean {
@@ -382,36 +346,6 @@ function taskUrl(baseUrl: string, id: string): string {
     ? baseUrl.slice(0, -"/backend-api".length)
     : baseUrl;
   return `${root}/codex/tasks/${encodeURIComponent(id)}`;
-}
-
-function timestamp(value: number | undefined): Date | null {
-  return value === undefined ? null : new Date(value * 1000);
-}
-
-function object(value: unknown): Record<string, unknown> | undefined {
-  return value !== null && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function array(value: unknown): unknown[] | undefined {
-  return Array.isArray(value) ? value : undefined;
-}
-
-function objects(value: unknown): Record<string, unknown>[] {
-  return (array(value) ?? []).map(object).filter((item) => item !== undefined);
-}
-
-function strings(value: unknown): string[] {
-  return (array(value) ?? []).filter((item): item is string => typeof item === "string");
-}
-
-function string(value: unknown): string | undefined {
-  return typeof value === "string" ? value : undefined;
-}
-
-function number(value: unknown): number | undefined {
-  return typeof value === "number" ? value : undefined;
 }
 
 async function delay(milliseconds: number, signal?: AbortSignal): Promise<void> {

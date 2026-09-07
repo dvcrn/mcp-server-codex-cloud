@@ -20,7 +20,7 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
   await server.connect(a);
   await client.connect(b);
   try {
-    expect((await client.listTools()).tools).toHaveLength(11);
+    expect((await client.listTools()).tools).toHaveLength(14);
     const invalid = await client.callTool({
       name: "start_task",
       arguments: { environmentId: "env", prompt: "hi", attempts: 5 },
@@ -46,6 +46,81 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
     const refreshed = await client.callTool({ name: "refresh_auth", arguments: {} });
     expect(JSON.stringify(refreshed)).not.toContain("private");
     expect(refreshed.isError).not.toBe(true);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP dispatches history, logs and follow-ups with safe retry guidance", async () => {
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "test" },
+    fetch: async (url, init) => {
+      if (String(url).endsWith("/logs"))
+        return Response.json({
+          logs: [
+            {
+              key: { name: "setup", type: "UserSetupScript", created_at: "2026-09-07T00:00:00" },
+              line: "setup OK",
+            },
+          ],
+        });
+      if (String(url).endsWith("/turns"))
+        return Response.json({ current_turn_id: null, turn_mapping: {} });
+      const body = JSON.parse(String(init?.body));
+      if (body.input_items[0].content[0].text === "lose response")
+        throw new Error("private-upstream-detail");
+      return Response.json({
+        task: { id: body.follow_up.task_id },
+        user_turn: { id: "user" },
+        turn: { id: "assistant" },
+      });
+    },
+  });
+  const server = createMcpServer(sdk);
+  const client = new Client({ name: "history-test", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  await client.connect(b);
+  try {
+    const tools = (await client.listTools()).tools;
+    expect(tools.find((tool) => tool.name === "follow_up_task")?.annotations?.readOnlyHint).toBe(
+      false,
+    );
+    for (const name of ["list_task_turns", "get_task_logs"])
+      expect(tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint).toBe(true);
+    const history = await client.callTool({
+      name: "list_task_turns",
+      arguments: { taskId: "task" },
+    });
+    expect(history.isError).not.toBe(true);
+    expect(history.content).toEqual([
+      { type: "text", text: JSON.stringify({ currentTurnId: null, turns: [] }) },
+    ]);
+    const logs = await client.callTool({
+      name: "get_task_logs",
+      arguments: { taskId: "task", turnId: "turn" },
+    });
+    expect(logs.isError).not.toBe(true);
+    expect(JSON.stringify(logs)).toContain("setup OK");
+    const follow = await client.callTool({
+      name: "follow_up_task",
+      arguments: { taskId: "task", turnId: "turn", prompt: "hi" },
+    });
+    expect(follow.isError).not.toBe(true);
+    expect(JSON.stringify(follow)).toContain("userTurnId");
+    const invalid = await client.callTool({
+      name: "follow_up_task",
+      arguments: { taskId: "task", turnId: "turn", prompt: " " },
+    });
+    expect(invalid.isError).toBe(true);
+    const lost = await client.callTool({
+      name: "follow_up_task",
+      arguments: { taskId: "task", turnId: "turn", prompt: "lose response" },
+    });
+    expect(lost.isError).toBe(true);
+    expect(JSON.stringify(lost)).toContain("Check list_task_turns");
+    expect(JSON.stringify(lost)).not.toContain("private-upstream-detail");
   } finally {
     await client.close();
     await server.close();

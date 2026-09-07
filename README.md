@@ -39,7 +39,8 @@ After npm publication, configure an MCP client with:
 
 Tools: `list_environments`, `get_environment`, `list_environments_by_repository`,
 `create_environment`, `update_environment`, `list_tasks`, `start_task`, `get_task`,
-`list_sibling_turns`, `wait_for_task`, and `refresh_auth`.
+`list_sibling_turns`, `wait_for_task`, `follow_up_task`, `list_task_turns`,
+`get_task_logs`, and `refresh_auth`.
 
 `update_environment` accepts setup and maintenance scripts, variables, secrets,
 network settings, cache settings, and repository settings. Supplied scripts and
@@ -160,6 +161,30 @@ Task operations include:
 - `tasks.get()`
 - `tasks.listSiblingTurns()`
 - `tasks.waitFor()`
+- `tasks.followUp()`
+- `tasks.listTurns()`
+- `tasks.getLogs()`
+
+Continue an existing task from a selected assistant turn:
+
+```ts
+const history = await codex.tasks.listTurns(created.id);
+if (!history.currentTurnId) throw new Error("Task has no current turn");
+const followUp = await codex.tasks.followUp({
+  taskId: created.id,
+  turnId: history.currentTurnId,
+  prompt: "Check the result once more without modifying files.",
+});
+const logs = await codex.tasks.getLogs(followUp.id, followUp.turnId);
+```
+
+Follow-ups return `id`, `url`, `turnId`, and `userTurnId`. If a submission's
+response is lost, check `listTurns()` before submitting again to avoid duplicates.
+History returns `currentTurnId` and turns with `parentId`/`childIds`, preserving
+alternative attempts and follow-up branches. Logs contain `name`, `type`,
+`createdAt`, and `line`; timestamps retain the server's format. Call `getLogs()`
+again to retrieve updated output. The endpoint returns available per-turn logs,
+including setup output, rather than a live stream.
 
 ## Development
 

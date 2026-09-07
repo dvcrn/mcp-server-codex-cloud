@@ -141,6 +141,32 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     client.tasks.get(a.id, { signal }),
   );
   tool(
+    "follow_up_task",
+    "Submit a follow-up prompt against an existing task and turn. This consumes account usage.",
+    {
+      taskId: id,
+      turnId: id,
+      prompt: z.string().refine((value) => value.trim().length > 0, "Prompt must not be empty"),
+      qaMode: z.boolean().optional(),
+    },
+    false,
+    (a, signal) => client.tasks.followUp(defined(a), { signal }),
+  );
+  tool(
+    "list_task_turns",
+    "Get task conversation turns and their parent/child relationships.",
+    { taskId: id },
+    true,
+    (a, signal) => client.tasks.listTurns(a.taskId, { signal }),
+  );
+  tool(
+    "get_task_logs",
+    "Get the logs available for a specific task turn, including setup output.",
+    { taskId: id, turnId: id },
+    true,
+    (a, signal) => client.tasks.getLogs(a.taskId, a.turnId, { signal }),
+  );
+  tool(
     "list_sibling_turns",
     "List alternative attempts for a task turn.",
     { taskId: id, turnId: id },
@@ -195,5 +221,7 @@ function toolError(error: unknown, name: string): string {
     return "Codex authentication failed. Renew or reseed credentials.";
   if (name === "start_task")
     return "Task creation failed or its result was lost. Check list_tasks before starting another task.";
+  if (name === "follow_up_task")
+    return "Follow-up failed or its result was lost. Check list_task_turns before submitting it again.";
   return "Codex Cloud operation failed. Check the inputs and retry.";
 }

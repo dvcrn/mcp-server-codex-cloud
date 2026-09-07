@@ -240,6 +240,9 @@ uses the `/backend-api/wham/...` form.
 | `POST` | `/wham/tasks` | `/api/codex/tasks` | Create a task |
 | `GET` | `/wham/tasks/{task_id}` | `/api/codex/tasks/{task_id}` | Get task metadata, turns, messages, and diff |
 | `GET` | `/wham/tasks/{task_id}/turns/{turn_id}/sibling_turns` | `/api/codex/tasks/{task_id}/turns/{turn_id}/sibling_turns` | Get best-of-N sibling attempts |
+| `GET` | `/wham/tasks/{task_id}/turns` | Not tested | Get turn history and parent/child relationships |
+| `GET` | `/wham/tasks/{task_id}/turns/{turn_id}/logs` | Not tested | Get logs for a task turn |
+
 
 ### List tasks
 
@@ -703,3 +706,49 @@ https://chatgpt.com/codex/tasks/{task_id}
 
 The `/backend-api` segment is intentionally removed when this browser URL is
 constructed.
+
+## Task follow-ups, history, and logs
+
+Follow-ups use `POST /backend-api/wham/tasks` with this body:
+
+```json
+{
+  "follow_up": {
+    "task_id": "TASK_ID",
+    "turn_id": "TASK_ID~ASSISTANT_TURN_ID",
+    "run_environment_in_qa_mode": false
+  },
+  "input_items": [{
+    "type": "message",
+    "role": "user",
+    "content": [{ "content_type": "text", "text": "Follow-up prompt" }]
+  }]
+}
+```
+
+The response includes `task.id`, `user_turn.id`, and `turn.id`. The SDK returns
+these as `id`, `userTurnId`, and `turnId`, alongside the task URL.
+
+`GET /backend-api/wham/tasks/{task_id}/turns` returns `current_turn_id` and a
+`turn_mapping` object keyed by turn ID. Each node contains `id`, `parent`,
+`children`, and `turn`. The SDK preserves those relationships and exposes
+messages, status, environment ID, creation time, diff, and attempt placement.
+
+`GET /backend-api/wham/tasks/{task_id}/turns/{turn_id}/logs` returns:
+
+```json
+{
+  "logs": [{
+    "key": {
+      "name": "setup",
+      "type": "UserSetupScript",
+      "created_at": "2026-09-07T03:18:07.481184"
+    },
+    "line": "Running setup scripts..."
+  }]
+}
+```
+
+Log order and timestamps are preserved. These endpoints work with Codex OAuth
+credentials without browser cookies or Sentinel headers. Log output may contain
+sensitive information printed by task or setup scripts.
