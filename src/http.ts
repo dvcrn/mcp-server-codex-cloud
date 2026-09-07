@@ -1,5 +1,6 @@
 import type { AuthController, Fetch } from "./auth.js";
 import { ApiError, AuthenticationError, CodexCloudError } from "./errors.js";
+import { discardBody } from "./internal.js";
 
 export interface HttpClientOptions {
   auth: AuthController;
@@ -37,6 +38,8 @@ export class HttpClient {
     let response = await this.#send(url, method, tokens.accessToken, tokens.accountId, options);
 
     if (response.status === 401 && tokens.refreshToken) {
+      // The retried response replaces this one, so release its body explicitly.
+      await discardBody(response);
       tokens = await abortable(this.#auth.refresh(), options.signal);
       response = await this.#send(url, method, tokens.accessToken, tokens.accountId, options);
     }
@@ -44,12 +47,14 @@ export class HttpClient {
     if (!response.ok) {
       const requestId =
         response.headers.get("x-request-id") ?? response.headers.get("cf-ray") ?? undefined;
+      const detail = await errorDetail(response, options.signal);
       throw new ApiError(
         `${method} ${url} failed with HTTP ${response.status}`,
         response.status,
         method,
         url,
         requestId,
+        detail,
       );
     }
 
@@ -83,7 +88,7 @@ export class HttpClient {
     const init: RequestInit = { method, headers };
     if (options.body !== undefined) init.body = JSON.stringify(options.body);
     if (options.signal) init.signal = options.signal;
-    return abortable(this.#fetch(url, init), options.signal);
+    return abortable(this.#fetch(url, init), options.signal, discardBody);
   }
 
   #url(path: `/${string}`, query?: ApiRequestOptions["query"]): string {
@@ -111,13 +116,44 @@ export function normalizeBaseUrl(input: string): string {
   return url.toString().replace(/\/$/, "");
 }
 
+/**
+ * Read an upstream error body for diagnostics.
+ *
+ * Kept off `error.message` deliberately: request bodies carry environment
+ * secrets, and upstream echoes them back in validation errors. Callers that
+ * need the detail read `ApiError.detail` and decide where it may surface.
+ */
+async function errorDetail(response: Response, signal?: AbortSignal): Promise<string | undefined> {
+  try {
+    const text = (await abortable(response.text(), signal)).trim();
+    return text ? text.slice(0, 500) : undefined;
+  } catch {
+    await discardBody(response);
+    return undefined;
+  }
+}
+
 // Caller cancellation must not interrupt a shared refresh before rotated tokens are persisted.
-async function abortable<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+async function abortable<T>(
+  operation: Promise<T>,
+  signal?: AbortSignal,
+  onDiscard?: (value: T) => Promise<void>,
+): Promise<T> {
   if (!signal) return operation;
   return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(signal.reason);
+    let aborted = false;
+    const abort = () => {
+      aborted = true;
+      reject(signal.reason);
+    };
     if (signal.aborted) abort();
     else signal.addEventListener("abort", abort, { once: true });
-    operation.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    operation
+      .then(async (value) => {
+        if (aborted) await onDiscard?.(value);
+        else resolve(value);
+      }, reject)
+      .catch(reject)
+      .finally(() => signal.removeEventListener("abort", abort));
   });
 }

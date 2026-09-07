@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import lockfile from "proper-lockfile";
 import { AuthenticationError } from "./errors.js";
+import { cause, compactTokens } from "./internal.js";
 
 export interface CodexTokens {
   accessToken: string;
@@ -139,17 +140,4 @@ export class CodexAuthFileTokenStore implements TokenStore {
       throw new AuthenticationError(`Could not read Codex credentials: ${cause(error)}`);
     }
   }
-}
-
-function compactTokens(tokens: CodexTokens): CodexTokens {
-  const compact: CodexTokens = { accessToken: tokens.accessToken };
-  if (tokens.accountId !== undefined) compact.accountId = tokens.accountId;
-  if (tokens.refreshToken !== undefined) compact.refreshToken = tokens.refreshToken;
-  if (tokens.idToken !== undefined) compact.idToken = tokens.idToken;
-  if (tokens.lastRefresh !== undefined) compact.lastRefresh = tokens.lastRefresh;
-  return compact;
-}
-
-function cause(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

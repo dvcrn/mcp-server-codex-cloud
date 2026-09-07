@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { parseArgs } from "node:util";
 import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { CodexCloudClient } from "./client.js";
-import { fileDeviceAuth, waitForDeviceLogin } from "./device-login.js";
+import { fileDeviceAuth, waitForDeviceLogin } from "./device-auth.js";
 import { createMcpServer } from "./mcp.js";
 import { CodexAuthFileTokenStore } from "./token-store.js";
 
@@ -54,9 +54,10 @@ try {
     const server = createMcpServer(client);
     await server.connect(new StdioServerTransport());
   }
-} catch {
+} catch (error) {
+  const reason = error instanceof Error ? error.message : String(error);
   process.stderr.write(
-    "Codex Cloud command failed. Run auth to sign in, or check --help and --auth-file.\n",
+    `Codex Cloud command failed: ${reason}\nRun auth to sign in, or check --help and --auth-file.\n`,
   );
   process.exitCode = 1;
 }

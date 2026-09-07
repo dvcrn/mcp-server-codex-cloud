@@ -186,8 +186,10 @@ test("waitFor deadline does not wait for a stalled OAuth refresh", async () => {
 });
 
 test("waitFor deadline bounds transports that cannot cancel their underlying RPC", async () => {
+  // Regression: AbortSignal.timeout does not fire while such a request is
+  // outstanding, so waitFor must drive its deadline from an explicit timer.
   const api = makeApi(async () => new Promise<Response>(() => {}));
-  await expect(api.waitFor("task", { timeoutMs: 10 })).rejects.toThrow();
+  await expect(api.waitFor("task", { timeoutMs: 10 })).rejects.toThrow(/Timed out/);
 });
 
 test("waitFor deadline bounds a stalled response body", async () => {

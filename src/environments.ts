@@ -1,5 +1,6 @@
 import { CodexCloudError } from "./errors.js";
 import type { HttpClient } from "./http.js";
+import { segment } from "./internal.js";
 
 export interface AgentNetworkAccess {
   mode: string;
@@ -306,9 +307,4 @@ function mapEnvironment(wire: EnvironmentWire): CloudEnvironment {
 function scripts(value: string[] | string | undefined): string[] {
   if (value === undefined) return [];
   return Array.isArray(value) ? value : [value];
-}
-
-function segment(value: string): string {
-  if (!value.trim()) throw new CodexCloudError("Path identifiers must not be empty");
-  return encodeURIComponent(value);
 }

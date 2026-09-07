@@ -21,24 +21,7 @@ export {
 export { ApiError, AuthenticationError, CodexCloudError, TokenRefreshError } from "./errors.js";
 export type { ApiRequestOptions, HttpClientOptions } from "./http.js";
 export { normalizeBaseUrl } from "./http.js";
-export type {
-  CreatedTask,
-  CreatedTaskTurn,
-  CreateTaskInput,
-  DiffStats,
-  FollowUpTaskInput,
-  ListTasksOptions,
-  TaskAttempt,
-  TaskDetails,
-  TaskError,
-  TaskHistory,
-  TaskLogEntry,
-  TaskPage,
-  TaskStatus,
-  TaskSummary,
-  TaskTurn,
-  WaitForTaskOptions,
-} from "./tasks.js";
+export type * from "./task-types.js";
 export { TasksApi } from "./tasks.js";
 export type {
   CodexAuthFileTokenStoreOptions,

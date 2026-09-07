@@ -1,4 +1,5 @@
 import { AuthenticationError, TokenRefreshError } from "./errors.js";
+import { cause, compactTokens, discardBody, jwtPayload } from "./internal.js";
 import type { CodexTokens, TokenStore } from "./token-store.js";
 
 export type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -69,6 +70,7 @@ export class AuthController {
     }
 
     if (!response.ok) {
+      await discardBody(response);
       throw new TokenRefreshError(
         `Token refresh failed with HTTP ${response.status}`,
         response.status,
@@ -120,16 +122,8 @@ function refreshResponse(value: unknown): RefreshResponse {
 }
 
 export function accessTokenExpiresAt(accessToken: string): Date | undefined {
-  const encodedPayload = accessToken.split(".")[1];
-  if (!encodedPayload) return undefined;
-  try {
-    const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as {
-      exp?: unknown;
-    };
-    return typeof payload.exp === "number" ? new Date(payload.exp * 1000) : undefined;
-  } catch {
-    return undefined;
-  }
+  const exp = jwtPayload(accessToken)?.exp;
+  return typeof exp === "number" ? new Date(exp * 1000) : undefined;
 }
 
 function shouldRefresh(tokens: CodexTokens, refreshWindowMs: number): boolean {
@@ -137,17 +131,4 @@ function shouldRefresh(tokens: CodexTokens, refreshWindowMs: number): boolean {
   if (expiresAt) return expiresAt.getTime() <= Date.now() + refreshWindowMs;
   if (!tokens.lastRefresh) return false;
   return Date.parse(tokens.lastRefresh) <= Date.now() - 8 * 24 * 60 * 60 * 1000;
-}
-
-function compactTokens(tokens: CodexTokens): CodexTokens {
-  const compact: CodexTokens = { accessToken: tokens.accessToken };
-  if (tokens.accountId !== undefined) compact.accountId = tokens.accountId;
-  if (tokens.refreshToken !== undefined) compact.refreshToken = tokens.refreshToken;
-  if (tokens.idToken !== undefined) compact.idToken = tokens.idToken;
-  if (tokens.lastRefresh !== undefined) compact.lastRefresh = tokens.lastRefresh;
-  return compact;
-}
-
-function cause(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

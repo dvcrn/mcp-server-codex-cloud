@@ -8,7 +8,7 @@ import type {
   TaskStatus,
   TaskSummary,
   TaskTurn,
-} from "./tasks.js";
+} from "./task-types.js";
 
 export interface TaskListItemWire {
   id: string;

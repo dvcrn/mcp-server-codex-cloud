@@ -26,6 +26,11 @@ export class ApiError extends CodexCloudError {
     public readonly method: string,
     public readonly url: string,
     public readonly requestId?: string,
+    /**
+     * Upstream error body, truncated. May echo submitted secrets, so it is kept
+     * out of `message`; do not log it without redacting.
+     */
+    public readonly detail?: string,
   ) {
     super(message);
   }

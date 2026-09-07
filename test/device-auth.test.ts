@@ -1,7 +1,11 @@
 import { expect, test } from "bun:test";
 import type { Fetch } from "../src/auth.js";
-import { DeviceAuth, type DeviceAuthSession, type DeviceAuthStore } from "../src/device-auth.js";
-import { waitForDeviceLogin } from "../src/device-login.js";
+import {
+  DeviceAuth,
+  type DeviceAuthSession,
+  type DeviceAuthStore,
+  waitForDeviceLogin,
+} from "../src/device-auth.js";
 import type { CodexTokens } from "../src/token-store.js";
 
 function fixture(responses: Response[]) {

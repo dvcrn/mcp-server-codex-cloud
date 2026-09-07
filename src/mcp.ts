@@ -1,7 +1,7 @@
 import { McpServer, type ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { CodexCloudClient } from "./client.js";
-import { ApiError, AuthenticationError, TokenRefreshError } from "./errors.js";
+import { ApiError, AuthenticationError, CodexCloudError, TokenRefreshError } from "./errors.js";
 
 const id = z.string().trim().min(1);
 const repository = z.union([
@@ -202,23 +202,49 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   return server;
 }
 
-// Zod optional fields include undefined; SDK inputs require omitted optional properties.
+/**
+ * Zod fills absent optional fields with `undefined`, but `exactOptionalPropertyTypes`
+ * requires them omitted. Drop those keys so parsed input satisfies the API types.
+ */
 type Defined<T> = T extends object ? { [K in keyof T]: Defined<Exclude<T[K], undefined>> } : T;
 
-function defined<T>(value: T): Defined<T> {
-  return JSON.parse(JSON.stringify(value));
+function defined<T extends Record<string, unknown>>(value: T): Defined<T> {
+  const result: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry !== undefined) result[key] = entry;
+  }
+  return result as Defined<T>;
 }
 
+/**
+ * Build the message the calling model sees.
+ *
+ * Upstream error bodies are withheld deliberately: they can echo environment
+ * secrets submitted by `update_environment`. Status codes and validation
+ * messages raised by this package are safe and worth surfacing.
+ */
 function toolError(error: unknown, name: string): string {
   if (name === "wait_for_task" && error instanceof DOMException && error.name === "TimeoutError") {
     return "Timed out waiting for the task. Poll get_task or wait_for_task again.";
   }
-  if (error instanceof ApiError) return `Codex Cloud returned HTTP ${error.status}`;
+  if (error instanceof ApiError) {
+    const hint =
+      error.status === 404
+        ? " The referenced resource does not exist."
+        : error.status === 429
+          ? " The account is rate limited; retry later."
+          : error.status >= 500
+            ? " Codex Cloud is unavailable; retry later."
+            : " Check the inputs.";
+    return `Codex Cloud returned HTTP ${error.status}.${hint}`;
+  }
   if (error instanceof TokenRefreshError && error.status) {
     return `Codex OAuth refresh failed with HTTP ${error.status}. Renew or reseed credentials.`;
   }
   if (error instanceof AuthenticationError)
     return "Codex authentication failed. Renew or reseed credentials.";
+  // Raised by this package's own input validation, so the text is safe to show.
+  if (error instanceof CodexCloudError) return error.message;
   if (name === "start_task")
     return "Task creation failed or its result was lost. Check list_tasks before starting another task.";
   if (name === "follow_up_task")

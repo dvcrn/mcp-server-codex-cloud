@@ -1,6 +1,8 @@
+import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
 import type { Fetch } from "./auth.js";
-import type { CodexTokens } from "./token-store.js";
+import { discardBody, jwtPayload } from "./internal.js";
+import type { CodexTokens, TokenStore } from "./token-store.js";
 
 const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
 const authBase = "https://auth.openai.com";
@@ -61,10 +63,12 @@ export class DeviceAuth {
     const current = await this.status();
     if (current.status === "pending") return current;
     const response = await this.post("/api/accounts/deviceauth/usercode", { client_id: clientId });
-    if (!response.ok)
+    if (!response.ok) {
+      await discardBody(response);
       throw new DeviceAuthError(
         `Device authorization could not be started (HTTP ${response.status})`,
       );
+    }
     const parsed = startSchema.safeParse(await response.json().catch(() => null));
     if (!parsed.success) throw new DeviceAuthError("Invalid device authorization response");
     const rawInterval = Number(parsed.data.interval ?? 5);
@@ -102,8 +106,10 @@ export class DeviceAuth {
     });
     session.nextPollAt = this.now() + session.intervalMs;
     await this.store.saveSession(session);
-    if (response.status === 403 || response.status === 404 || response.status >= 500)
+    if (response.status === 403 || response.status === 404 || response.status >= 500) {
+      await discardBody(response);
       return this.view(session);
+    }
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
       const error = z
@@ -140,7 +146,10 @@ export class DeviceAuth {
         redirect_uri: `${authBase}/deviceauth/callback`,
       }).toString(),
     });
-    if (!tokenResponse.ok) return { status: "failed" };
+    if (!tokenResponse.ok) {
+      await discardBody(tokenResponse);
+      return { status: "failed" };
+    }
     const credentials = credentialsSchema.safeParse(await tokenResponse.json().catch(() => null));
     if (!credentials.success) return { status: "failed" };
     const accountId = readAccountId(credentials.data.access_token);
@@ -193,17 +202,49 @@ export class DeviceAuth {
 }
 
 function readAccountId(token: string): string | undefined {
-  try {
-    const payload: unknown = JSON.parse(
-      Buffer.from(token.split(".")[1] ?? "", "base64url").toString(),
-    );
-    const parsed = z
-      .object({ "https://api.openai.com/auth": z.object({ chatgpt_account_id: nonempty }) })
-      .safeParse(payload);
-    return parsed.success
-      ? parsed.data["https://api.openai.com/auth"].chatgpt_account_id
-      : undefined;
-  } catch {
-    return undefined;
+  const parsed = z
+    .object({ "https://api.openai.com/auth": z.object({ chatgpt_account_id: nonempty }) })
+    .safeParse(jwtPayload(token));
+  return parsed.success ? parsed.data["https://api.openai.com/auth"].chatgpt_account_id : undefined;
+}
+
+/**
+ * Back a device login with an in-process session and persist the resulting
+ * credentials, for clients that hold the whole flow in one process.
+ */
+export function fileDeviceAuth(tokenStore: TokenStore, upstreamFetch: Fetch = fetch): DeviceAuth {
+  let session: DeviceAuthSession | undefined;
+  return new DeviceAuth(
+    {
+      loadSession: async () => session,
+      saveSession: async (next) => {
+        session = next;
+      },
+      complete: async (tokens) => {
+        await tokenStore.save(tokens);
+        session = { status: "authenticated" };
+      },
+    },
+    upstreamFetch,
+  );
+}
+
+/** Drive a device login to completion, honouring the server-provided poll interval. */
+export async function waitForDeviceLogin(
+  auth: Pick<DeviceAuth, "start" | "poll">,
+  showCode: (status: Extract<DeviceAuthStatus, { status: "pending" }>) => void,
+  signal: AbortSignal,
+): Promise<void> {
+  signal.throwIfAborted();
+  let status = await auth.start();
+  if (status.status === "pending") showCode(status);
+  while (status.status === "pending") {
+    const remainingMs = Date.parse(status.expiresAt) - Date.now();
+    if (remainingMs <= 0) throw new Error("Device authorization expired; start auth again");
+    await delay(Math.min(status.retryAfterSeconds * 1000, remainingMs), undefined, { signal });
+    signal.throwIfAborted();
+    status = await auth.poll();
   }
+  if (status.status !== "authenticated")
+    throw new Error("Device authorization failed; start auth again");
 }

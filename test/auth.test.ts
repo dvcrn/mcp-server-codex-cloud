@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AuthController, accessTokenExpiresAt } from "../src/auth.js";
-import { fileDeviceAuth, waitForDeviceLogin } from "../src/device-login.js";
+import { fileDeviceAuth, waitForDeviceLogin } from "../src/device-auth.js";
 import { CodexAuthFileTokenStore, MemoryTokenStore } from "../src/token-store.js";
 
 const temporaryDirectories: string[] = [];
@@ -15,6 +15,26 @@ afterEach(async () => {
 });
 
 describe("AuthController", () => {
+  test("releases failed refresh responses without replacing credentials", async () => {
+    let canceled = false;
+    const store = new MemoryTokenStore({ accessToken: "old", refreshToken: "refresh" });
+    const auth = new AuthController({
+      tokenStore: store,
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              canceled = true;
+            },
+          }),
+          { status: 400 },
+        ),
+    });
+    await expect(auth.refresh()).rejects.toThrow("Token refresh failed with HTTP 400");
+    expect(canceled).toBe(true);
+    expect(await store.load()).toEqual({ accessToken: "old", refreshToken: "refresh" });
+  });
+
   test("refreshes an expiring token and stores rotated credentials", async () => {
     const store = new MemoryTokenStore({
       accessToken: jwt({ exp: Math.floor(Date.now() / 1000) + 10 }),
