@@ -12,6 +12,9 @@
   "type": "module",
   "version": "0.1.0",
   "description": "MCP server for Codex Cloud environments and tasks",
+  "scripts": {
+    "prepublish": "mise run build"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "engines": {
