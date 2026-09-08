@@ -12,15 +12,39 @@
   "type": "module",
   "version": "0.1.0",
   "description": "MCP server for Codex Cloud environments and tasks",
+  "author": "David Mohl",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dvcrn/mcp-server-codex-cloud.git"
+  },
+  "homepage": "https://github.com/dvcrn/mcp-server-codex-cloud#readme",
+  "bugs": {
+    "url": "https://github.com/dvcrn/mcp-server-codex-cloud/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "codex",
+    "codex-cloud",
+    "openai"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "scripts": {
-    "prepublish": "mise run build"
+    "prepack": "mise run build"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "engines": {
     "node": ">=20"
   },
-  "exports": "./dist/index.js",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "files": [
     "dist",
     "README.md",

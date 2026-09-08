@@ -1,6 +1,3 @@
-[env]
-CODEX_WORKER_URL = "https://mcp-server-codex-cloud.dsh.workers.dev"
-
 [tools]
 bun = "1.3.14"
 
@@ -59,7 +56,6 @@ run = "fnox exec --profile production --no-defaults -- bun scripts/seed-worker.t
 run = "fnox exec --profile production --no-defaults -- bun scripts/auth-worker.ts"
 
 [tasks."worker:smoke"]
-env = { CODEX_WORKER_URL = "http://127.0.0.1:8787" }
 run = "bun scripts/smoke-worker.ts"
 
 [tasks."worker:smoke:remote"]
