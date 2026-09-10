@@ -29,8 +29,18 @@ const update = z.strictObject({
   machineId: id.optional(),
   description: z.string().nullable().optional(),
   workspaceDirectory: z.string().nullable().optional(),
-  setupScript: z.string().optional(),
-  maintenanceScript: z.string().optional(),
+  setupScript: z
+    .string()
+    .describe(
+      "Script used to initialize an uncached environment. Set autoSetupEnabled to false for this script to run.",
+    )
+    .optional(),
+  maintenanceScript: z
+    .string()
+    .describe(
+      "Optional script run after the task branch is checked out when a cached container resumes. Use it to update dependencies installed by an older setup run. Set autoSetupEnabled to false for this script to run.",
+    )
+    .optional(),
   environmentVariables: strings.optional(),
   secrets: strings.optional(),
   networkAccess: z
@@ -47,7 +57,12 @@ const update = z.strictObject({
     ])
     .nullable()
     .optional(),
-  autoSetupEnabled: z.boolean().optional(),
+  autoSetupEnabled: z
+    .boolean()
+    .describe(
+      "Use Codex automatic dependency setup. When true, custom setup and maintenance scripts are ignored. Set false to use those scripts.",
+    )
+    .optional(),
   cache: z
     .strictObject({
       postSetupCacheEnabled: z.boolean(),
@@ -115,6 +130,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     (a, signal) => client.environments.get(a.id, { signal }),
   );
   tool(
+    "test_environment",
+    "Run the current Codex Cloud environment configuration and return its setup logs after the test finishes.",
+    { id },
+    false,
+    (a, signal) => client.environments.test(a.id, { signal }),
+  );
+  tool(
     "list_environments_by_repository",
     "List environments associated with a repository.",
     { owner: id, repository: id, provider: id.optional() },
@@ -134,7 +156,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "update_environment",
-    "Update environment settings. Provided scripts and maps replace their current values; omitted fields are preserved.",
+    "Update environment settings. Provided scripts and maps replace their current values; omitted fields are preserved. Automatic setup ignores custom setup and maintenance scripts, so set autoSetupEnabled to false when using either script.",
     { id, update },
     false,
     (a, signal) =>
@@ -174,6 +196,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     { id },
     true,
     (a, signal) => client.tasks.get(a.id, { signal }),
+  );
+  tool(
+    "cancel_task",
+    "Cancel a running Codex Cloud task. Completed, failed, and already cancelled tasks may reject cancellation.",
+    { id },
+    false,
+    (a, signal) => client.tasks.cancel(a.id, { signal }),
   );
   tool(
     "follow_up_task",
@@ -274,6 +303,12 @@ function toolError(error: unknown, name: string): string {
     return "Timed out waiting for the task. Poll get_task or wait_for_task again.";
   }
   if (error instanceof ApiError) {
+    if (
+      name === "cancel_task"
+      && (error.status === 400 || error.status === 409)
+    ) {
+      return "The task cannot be cancelled in its current state.";
+    }
     const hint =
       error.status === 404
         ? " The referenced resource does not exist."

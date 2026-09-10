@@ -60,6 +60,11 @@ export interface CreatedTask {
   url: string;
 }
 
+export interface CancelledTask {
+  id: string;
+  cancelled: true;
+}
+
 export interface FollowUpTaskInput {
   taskId: string;
   turnId: string;

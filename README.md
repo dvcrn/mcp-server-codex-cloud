@@ -60,8 +60,8 @@ as its argument.
 | Capability | Tools |
 | --- | --- |
 | Find environments | `list_environments`, `get_environment`, `list_environments_by_repository` |
-| Configure environments, scripts, variables, and secrets | `create_environment`, `update_environment` |
-| Start tasks and read results or diffs | `start_task`, `list_tasks`, `get_task`, `wait_for_task` |
+| Configure and test environments, scripts, variables, and secrets | `create_environment`, `update_environment`, `test_environment` |
+| Start, cancel, and read tasks or diffs | `start_task`, `cancel_task`, `list_tasks`, `get_task`, `wait_for_task` |
 | Continue tasks and inspect conversation branches | `follow_up_task`, `list_task_turns`, `list_sibling_turns` |
 | Read available per-turn logs, including setup output | `get_task_logs` |
 | Refresh saved credentials manually | `refresh_auth` |
@@ -71,6 +71,12 @@ code review, wait for the result, then follow up asking for tests.” Task runs
 consume your Codex account usage. Environment updates replace supplied scripts
 and variable or secret maps. If a follow-up response is lost, check the turn
 history before resubmitting.
+
+Set `autoSetupEnabled` to `false` when using a custom setup or maintenance
+script. Automatic setup ignores both custom scripts. The setup script initializes
+an uncached environment before Codex saves its container state. When that cached
+container resumes, Codex checks out the task branch and runs the optional
+maintenance script, which can update dependencies installed from an older commit.
 
 ## Deploy to Cloudflare
 

@@ -13,6 +13,8 @@ export type {
   EnvironmentCacheSettings,
   EnvironmentCacheSettingsInput,
   EnvironmentPermissions,
+  EnvironmentTestLog,
+  EnvironmentTestResult,
   RepositoryId,
   UpdateEnvironmentInput,
 } from "./environments.js";

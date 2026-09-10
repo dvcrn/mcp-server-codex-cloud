@@ -16,6 +16,18 @@ export interface EnvironmentCacheSettings {
   cacheInvalidationKey: string;
 }
 
+const defaultEnvironmentVariables: Record<string, string> = {
+  CODEX_ENV_PYTHON_VERSION: "3.12",
+  CODEX_ENV_NODE_VERSION: "20",
+  CODEX_ENV_RUBY_VERSION: "3.4.4",
+  CODEX_ENV_RUST_VERSION: "1.89.0",
+  CODEX_ENV_GO_VERSION: "1.24.3",
+  CODEX_ENV_BUN_VERSION: "1.2.14",
+  CODEX_ENV_PHP_VERSION: "8.4",
+  CODEX_ENV_JAVA_VERSION: "21",
+  CODEX_ENV_SWIFT_VERSION: "6.1",
+};
+
 export interface EnvironmentPermissions {
   canWrite: boolean;
   canDelete: boolean;
@@ -27,10 +39,12 @@ export interface CloudEnvironment {
   machineId: string;
   repositoryIds: string[];
   repositories: Record<string, unknown>;
+  githubConnectorId: string | null;
   setupScripts: string[];
   maintenanceScripts: string[];
   environmentVariables: Record<string, string>;
   secretNames: string[];
+  secretsWithDomains: unknown[];
   networkAccess: AgentNetworkAccess | null;
   autoSetupEnabled: boolean | null;
   cache: EnvironmentCacheSettings | null;
@@ -45,6 +59,7 @@ export interface CloudEnvironment {
   authTranslatorEnabled: boolean;
   shareSettings: string | null;
   shareTargets: unknown[];
+  warnings?: string[];
 }
 
 export type RepositoryId = `github-${string}`;
@@ -83,6 +98,17 @@ export interface AgentNetworkAccessInput {
 export interface EnvironmentCacheSettingsInput {
   postSetupCacheEnabled: boolean;
   cacheInvalidationKey?: string;
+}
+
+export interface EnvironmentTestLog {
+  type: string;
+  key: string;
+  line: string;
+}
+
+export interface EnvironmentTestResult {
+  success: boolean;
+  logs: EnvironmentTestLog[];
 }
 
 export class EnvironmentsApi {
@@ -145,6 +171,12 @@ export class EnvironmentsApi {
           label: input.label,
           repos: input.repositories.map(repositoryId),
           machine_id: input.machineId ?? "wham-public/wham-universal",
+          description: "",
+          workspace_dir: "/workspace",
+          setup: [""],
+          maintenance_setup: [""],
+          env_vars: defaultEnvironmentVariables,
+          auto_setup_settings: { use_auto_setup: true },
         },
         signal: options.signal,
       },
@@ -165,7 +197,51 @@ export class EnvironmentsApi {
         signal: options.signal,
       },
     );
-    return mapEnvironment(environment);
+    const result = mapEnvironment(environment);
+    if (
+      result.autoSetupEnabled === true
+      && (input.setupScript !== undefined
+        || input.maintenanceScript !== undefined)
+    ) {
+      result.warnings = [
+        "Custom setup and maintenance scripts are ignored because autoSetupEnabled is true. Set it to false for these scripts to run.",
+      ];
+    }
+    return result;
+  }
+
+  /** Runs the current environment configuration and collects its setup logs. */
+  public async test(
+    id: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<EnvironmentTestResult> {
+    const environment = await this.get(id, options);
+    const stream = await this.http.requestEventStream("/environments/test", {
+      method: "POST",
+      body: {
+        machine_id: environment.machineId,
+        repos: environment.repositoryIds,
+        github_connector_id: environment.githubConnectorId,
+        setup: environment.setupScripts,
+        maintenance_setup: environment.maintenanceScripts,
+        workspace_dir: environment.workspaceDirectory ?? "/workspace",
+        env_vars: environment.environmentVariables,
+        secrets_with_domains: environment.secretsWithDomains,
+        environment_id: environment.id,
+        agent_network_access: environment.networkAccess
+          ? mapNetworkInput(environment.networkAccess)
+          : null,
+        auto_setup_settings: {
+          use_auto_setup: environment.autoSetupEnabled ?? true,
+        },
+      },
+      signal: options.signal,
+    });
+    const logs = parseTestLogs(stream);
+    return {
+      success: !logs.some((log) => isTestError(log.type)),
+      logs,
+    };
   }
 }
 
@@ -194,10 +270,12 @@ interface EnvironmentWire {
   machine_id: string;
   repos?: string[];
   repo_map?: Record<string, unknown>;
+  github_connector_id?: string | null;
   setup?: string[] | string;
   maintenance_setup?: string[] | string;
   env_vars?: Record<string, string>;
   secrets?: Record<string, string>;
+  secrets_with_domains?: unknown[];
   agent_network_access?: NetworkWire | null;
   auto_setup_settings?: { use_auto_setup?: boolean } | null;
   cache_settings?: {
@@ -311,10 +389,12 @@ function mapEnvironment(wire: EnvironmentWire): CloudEnvironment {
     machineId: wire.machine_id,
     repositoryIds: wire.repos ?? [],
     repositories: wire.repo_map ?? {},
+    githubConnectorId: wire.github_connector_id ?? null,
     setupScripts: scripts(wire.setup),
     maintenanceScripts: scripts(wire.maintenance_setup),
     environmentVariables: wire.env_vars ?? {},
     secretNames: Object.keys(wire.secrets ?? {}),
+    secretsWithDomains: wire.secrets_with_domains ?? [],
     networkAccess: network
       ? {
           mode: network.mode ?? "unknown",
@@ -359,4 +439,46 @@ function scripts(value: string[] | string | undefined): string[] {
     return [];
   }
   return Array.isArray(value) ? value : [value];
+}
+
+function parseTestLogs(stream: string): EnvironmentTestLog[] {
+  const logs: EnvironmentTestLog[] = [];
+  for (const event of stream.split(/\r?\n\r?\n/)) {
+    const data = event
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trimStart())
+      .join("\n");
+    if (!data || data === "[DONE]") {
+      continue;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      throw new CodexCloudError("Environment test returned invalid SSE data");
+    }
+    if (!isRecord(parsed)) {
+      throw new CodexCloudError("Environment test returned invalid SSE data");
+    }
+    logs.push({
+      type: typeof parsed.type === "string" ? parsed.type : "log",
+      key: typeof parsed.key === "string" ? parsed.key : "system",
+      line:
+        typeof parsed.line === "string"
+          ? parsed.line
+          : typeof parsed.message === "string"
+            ? parsed.message
+            : data,
+    });
+  }
+  return logs;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isTestError(type: string): boolean {
+  return type === "error" || type.endsWith("_error");
 }

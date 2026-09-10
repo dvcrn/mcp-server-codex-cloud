@@ -19,6 +19,7 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
         id: "env",
         label: "Dummy",
         machine_id: "machine",
+        auto_setup_settings: { use_auto_setup: true },
       });
     },
   });
@@ -29,7 +30,7 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
   await client.connect(b);
   try {
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(16);
     const createEnvironment = tools.find(
       (tool) => tool.name === "create_environment",
     );
@@ -54,7 +55,7 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
     });
     expect(invalid.isError).toBe(true);
     expect(requests).toHaveLength(0);
-    await client.callTool({
+    const updateEnvironment = await client.callTool({
       name: "update_environment",
       arguments: {
         id: "env",
@@ -73,6 +74,18 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
         cache_invalidation_key: "",
       },
     });
+    expect(JSON.stringify(updateEnvironment)).toContain(
+      "Custom setup and maintenance scripts are ignored",
+    );
+    const updateEnvironmentTool = tools.find(
+      (tool) => tool.name === "update_environment",
+    );
+    expect(updateEnvironmentTool?.description).toContain(
+      "set autoSetupEnabled to false",
+    );
+    expect(JSON.stringify(updateEnvironmentTool?.inputSchema)).toContain(
+      "when a cached container resumes",
+    );
     const refreshed = await client.callTool({
       name: "refresh_auth",
       arguments: {},
@@ -168,6 +181,93 @@ test("MCP dispatches history, logs and follow-ups with safe retry guidance", asy
     expect(lost.isError).toBe(true);
     expect(JSON.stringify(lost)).toContain("Check list_task_turns");
     expect(JSON.stringify(lost)).not.toContain("private-upstream-detail");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP cancels tasks and reports invalid task states", async () => {
+  let status = 204;
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "test" },
+    fetch: async () => new Response(null, { status }),
+  });
+  const server = createMcpServer(sdk);
+  const client = new Client({ name: "cancel-test", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  await client.connect(b);
+  try {
+    const tools = (await client.listTools()).tools;
+    const cancelTool = tools.find((tool) => tool.name === "cancel_task");
+    expect(cancelTool?.annotations?.readOnlyHint).toBe(false);
+    expect(cancelTool?.description).toContain("already cancelled");
+
+    const cancelled = await client.callTool({
+      name: "cancel_task",
+      arguments: { id: "task-1" },
+    });
+    expect(cancelled.isError).not.toBe(true);
+    expect(cancelled.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({ id: "task-1", cancelled: true }),
+      },
+    ]);
+
+    status = 409;
+    const rejected = await client.callTool({
+      name: "cancel_task",
+      arguments: { id: "task-1" },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain(
+      "cannot be cancelled in its current state",
+    );
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP runs environment tests and returns aggregated logs", async () => {
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "test" },
+    fetch: async (url) => {
+      if (String(url).endsWith("/environments/test")) {
+        return new Response(
+          'data: {"type":"log","key":"system","line":"Setup complete"}\n\n',
+        );
+      }
+      return Response.json([
+        {
+          id: "env-1",
+          label: "Test",
+          machine_id: "machine",
+          repos: ["github-1"],
+        },
+      ]);
+    },
+  });
+  const server = createMcpServer(sdk);
+  const client = new Client({ name: "environment-test", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  await client.connect(b);
+  try {
+    const tools = (await client.listTools()).tools;
+    expect(
+      tools.find((tool) => tool.name === "test_environment")?.annotations
+        ?.readOnlyHint,
+    ).toBe(false);
+
+    const result = await client.callTool({
+      name: "test_environment",
+      arguments: { id: "env-1" },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result)).toContain("Setup complete");
   } finally {
     await client.close();
     await server.close();
