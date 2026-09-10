@@ -11,6 +11,7 @@ import {
   type TaskListItemWire,
 } from "./task-mappers.js";
 import type {
+  CancelledTask,
   CreatedTask,
   CreatedTaskTurn,
   CreateTaskInput,
@@ -123,6 +124,18 @@ export class TasksApi {
       },
     );
     return mapTaskDetails(id, response);
+  }
+
+  /** Requests cancellation of a running task. */
+  public async cancel(
+    id: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CancelledTask> {
+    await this.http.request(`/tasks/${segment(id)}/cancel`, {
+      method: "POST",
+      signal: options.signal,
+    });
+    return { id, cancelled: true };
   }
 
   public async followUp(

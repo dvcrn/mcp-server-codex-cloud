@@ -117,6 +117,26 @@ describe("TasksApi", () => {
     });
   });
 
+  test("cancels a task with an empty request body", async () => {
+    let url = "";
+    let method = "";
+    let body: unknown;
+    const api = makeApi(async (input, init) => {
+      url = String(input);
+      method = init?.method ?? "";
+      body = init?.body;
+      return new Response(null, { status: 204 });
+    });
+
+    expect(await api.cancel("task/1")).toEqual({
+      id: "task/1",
+      cancelled: true,
+    });
+    expect(url).toEndWith("/wham/tasks/task%2F1/cancel");
+    expect(method).toBe("POST");
+    expect(body).toBeUndefined();
+  });
+
   test("rejects limits outside the backend range", async () => {
     const api = makeApi(async () => Response.json({ items: [], cursor: null }));
 

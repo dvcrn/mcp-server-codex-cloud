@@ -191,6 +191,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     (a, signal) => client.tasks.get(a.id, { signal }),
   );
   tool(
+    "cancel_task",
+    "Cancel a running Codex Cloud task. Completed, failed, and already cancelled tasks may reject cancellation.",
+    { id },
+    false,
+    (a, signal) => client.tasks.cancel(a.id, { signal }),
+  );
+  tool(
     "follow_up_task",
     "Submit a follow-up prompt against an existing task and turn. This consumes account usage.",
     {
@@ -289,6 +296,12 @@ function toolError(error: unknown, name: string): string {
     return "Timed out waiting for the task. Poll get_task or wait_for_task again.";
   }
   if (error instanceof ApiError) {
+    if (
+      name === "cancel_task"
+      && (error.status === 400 || error.status === 409)
+    ) {
+      return "The task cannot be cancelled in its current state.";
+    }
     const hint =
       error.status === 404
         ? " The referenced resource does not exist."

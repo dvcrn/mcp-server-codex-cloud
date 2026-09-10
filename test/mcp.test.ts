@@ -30,7 +30,7 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
   await client.connect(b);
   try {
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(14);
+    expect(tools).toHaveLength(15);
     const createEnvironment = tools.find(
       (tool) => tool.name === "create_environment",
     );
@@ -181,6 +181,50 @@ test("MCP dispatches history, logs and follow-ups with safe retry guidance", asy
     expect(lost.isError).toBe(true);
     expect(JSON.stringify(lost)).toContain("Check list_task_turns");
     expect(JSON.stringify(lost)).not.toContain("private-upstream-detail");
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP cancels tasks and reports invalid task states", async () => {
+  let status = 204;
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "test" },
+    fetch: async () => new Response(null, { status }),
+  });
+  const server = createMcpServer(sdk);
+  const client = new Client({ name: "cancel-test", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  await client.connect(b);
+  try {
+    const tools = (await client.listTools()).tools;
+    const cancelTool = tools.find((tool) => tool.name === "cancel_task");
+    expect(cancelTool?.annotations?.readOnlyHint).toBe(false);
+    expect(cancelTool?.description).toContain("already cancelled");
+
+    const cancelled = await client.callTool({
+      name: "cancel_task",
+      arguments: { id: "task-1" },
+    });
+    expect(cancelled.isError).not.toBe(true);
+    expect(cancelled.content).toEqual([
+      {
+        type: "text",
+        text: JSON.stringify({ id: "task-1", cancelled: true }),
+      },
+    ]);
+
+    status = 409;
+    const rejected = await client.callTool({
+      name: "cancel_task",
+      arguments: { id: "task-1" },
+    });
+    expect(rejected.isError).toBe(true);
+    expect(JSON.stringify(rejected)).toContain(
+      "cannot be cancelled in its current state",
+    );
   } finally {
     await client.close();
     await server.close();
