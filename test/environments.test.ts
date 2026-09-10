@@ -135,6 +135,62 @@ describe("EnvironmentsApi", () => {
       "/wham/environments/by-repo/github/owner%20name/repo%2Fname",
     );
   });
+
+  test("tests an environment and aggregates SSE logs", async () => {
+    const requests: { url: string; accept: string; body: unknown }[] = [];
+    const api = makeApi(async (input, init) => {
+      requests.push({
+        url: String(input),
+        accept: new Headers(init?.headers).get("accept") ?? "",
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
+      if (String(input).endsWith("/environments/test")) {
+        return new Response(
+          'data: {"type":"log","key":"system","line":"Starting test"}\r\n\r\ndata: {"type":"log","key":"setup_autodetect","line":"Configuring runtimes"}\r\n\r\ndata: [DONE]\r\n\r\n',
+          { headers: { "content-type": "text/event-stream" } },
+        );
+      }
+      return Response.json([environmentWire()]);
+    });
+
+    expect(await api.test("env-1")).toEqual({
+      success: true,
+      logs: [
+        { type: "log", key: "system", line: "Starting test" },
+        {
+          type: "log",
+          key: "setup_autodetect",
+          line: "Configuring runtimes",
+        },
+      ],
+    });
+    expect(requests[1]).toEqual({
+      url: "https://chatgpt.com/backend-api/wham/environments/test",
+      accept: "text/event-stream",
+      body: {
+        machine_id: "wham-public/wham-universal",
+        repos: ["github-1165432182"],
+        github_connector_id: "connector-1",
+        setup: ["echo setup"],
+        maintenance_setup: [],
+        workspace_dir: "/workspace",
+        env_vars: { FOO: "bar" },
+        secrets_with_domains: [
+          { name: "FOO_SECRET", domains: ["example.com"] },
+        ],
+        environment_id: "env-1",
+        agent_network_access: {
+          mode: "on",
+          preset_allowlist: "all",
+          allowlist_domains: "",
+          allowlist_rules: null,
+          denylist_domains: null,
+          safe_methods_only: null,
+        },
+        auto_setup_settings: { use_auto_setup: true },
+      },
+    });
+  });
 });
 
 test("githubRepositoryId rejects non-numeric IDs", async () => {
@@ -171,10 +227,12 @@ function environmentWire(): object {
     machine_id: "wham-public/wham-universal",
     repos: ["github-1165432182"],
     repo_map: {},
+    github_connector_id: "connector-1",
     setup: ["echo setup"],
     maintenance_setup: [],
     env_vars: { FOO: "bar" },
     secrets: { FOO_SECRET: "<REDACTED>" },
+    secrets_with_domains: [{ name: "FOO_SECRET", domains: ["example.com"] }],
     agent_network_access: {
       mode: "on",
       preset_allowlist: "all",

@@ -30,7 +30,7 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
   await client.connect(b);
   try {
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(15);
+    expect(tools).toHaveLength(16);
     const createEnvironment = tools.find(
       (tool) => tool.name === "create_environment",
     );
@@ -225,6 +225,49 @@ test("MCP cancels tasks and reports invalid task states", async () => {
     expect(JSON.stringify(rejected)).toContain(
       "cannot be cancelled in its current state",
     );
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("MCP runs environment tests and returns aggregated logs", async () => {
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "test" },
+    fetch: async (url) => {
+      if (String(url).endsWith("/environments/test")) {
+        return new Response(
+          'data: {"type":"log","key":"system","line":"Setup complete"}\n\n',
+        );
+      }
+      return Response.json([
+        {
+          id: "env-1",
+          label: "Test",
+          machine_id: "machine",
+          repos: ["github-1"],
+        },
+      ]);
+    },
+  });
+  const server = createMcpServer(sdk);
+  const client = new Client({ name: "environment-test", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  await client.connect(b);
+  try {
+    const tools = (await client.listTools()).tools;
+    expect(
+      tools.find((tool) => tool.name === "test_environment")?.annotations
+        ?.readOnlyHint,
+    ).toBe(false);
+
+    const result = await client.callTool({
+      name: "test_environment",
+      arguments: { id: "env-1" },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result)).toContain("Setup complete");
   } finally {
     await client.close();
     await server.close();

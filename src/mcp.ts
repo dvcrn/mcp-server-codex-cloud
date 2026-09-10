@@ -130,6 +130,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     (a, signal) => client.environments.get(a.id, { signal }),
   );
   tool(
+    "test_environment",
+    "Run the current Codex Cloud environment configuration and return its setup logs after the test finishes.",
+    { id },
+    false,
+    (a, signal) => client.environments.test(a.id, { signal }),
+  );
+  tool(
     "list_environments_by_repository",
     "List environments associated with a repository.",
     { owner: id, repository: id, provider: id.optional() },

@@ -39,12 +39,50 @@ export class HttpClient {
     path: `/${string}`,
     options: ApiRequestOptions = {},
   ): Promise<T> {
+    const { response, method, url } = await this.#response(
+      path,
+      options,
+      "application/json",
+    );
+    if (response.status === 204) {
+      return undefined as T;
+    }
+    const text = await abortable(response.text(), options.signal);
+    if (!text) {
+      return undefined as T;
+    }
+    try {
+      return JSON.parse(text) as T;
+    } catch {
+      throw new CodexCloudError(`${method} ${url} returned invalid JSON`);
+    }
+  }
+
+  /** Returns an authenticated event-stream response after consuming it. */
+  public async requestEventStream(
+    path: `/${string}`,
+    options: ApiRequestOptions = {},
+  ): Promise<string> {
+    const { response } = await this.#response(
+      path,
+      options,
+      "text/event-stream",
+    );
+    return abortable(response.text(), options.signal);
+  }
+
+  async #response(
+    path: `/${string}`,
+    options: ApiRequestOptions,
+    accept: string,
+  ): Promise<{ response: Response; method: string; url: string }> {
     const method = options.method ?? "GET";
     const url = this.#url(path, options.query);
     let tokens = await abortable(this.#auth.tokens(), options.signal);
     let response = await this.#send(
       url,
       method,
+      accept,
       tokens.accessToken,
       tokens.accountId,
       options,
@@ -57,6 +95,7 @@ export class HttpClient {
       response = await this.#send(
         url,
         method,
+        accept,
         tokens.accessToken,
         tokens.accountId,
         options,
@@ -79,23 +118,13 @@ export class HttpClient {
       );
     }
 
-    if (response.status === 204) {
-      return undefined as T;
-    }
-    const text = await abortable(response.text(), options.signal);
-    if (!text) {
-      return undefined as T;
-    }
-    try {
-      return JSON.parse(text) as T;
-    } catch {
-      throw new CodexCloudError(`${method} ${url} returned invalid JSON`);
-    }
+    return { response, method, url };
   }
 
   async #send(
     url: string,
     method: string,
+    accept: string,
     accessToken: string,
     accountId: string | undefined,
     options: ApiRequestOptions,
@@ -105,7 +134,7 @@ export class HttpClient {
       throw new AuthenticationError("A ChatGPT access token is required");
     }
     const headers = new Headers({
-      accept: "application/json",
+      accept,
       authorization: `Bearer ${accessToken}`,
       "user-agent": this.#userAgent,
     });

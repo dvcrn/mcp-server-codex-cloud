@@ -75,6 +75,24 @@ describe("HttpClient", () => {
     expect(capturedHeaders?.get("chatgpt-account-id")).toBe("account");
   });
 
+  test("requests and consumes event streams", async () => {
+    let accept = "";
+    const client = makeClient(async (_input, init) => {
+      accept = new Headers(init?.headers).get("accept") ?? "";
+      return new Response('data: {"type":"log"}\n\n', {
+        headers: { "content-type": "text/event-stream" },
+      });
+    });
+
+    expect(
+      await client.requestEventStream("/environments/test", {
+        method: "POST",
+        body: {},
+      }),
+    ).toBe('data: {"type":"log"}\n\n');
+    expect(accept).toBe("text/event-stream");
+  });
+
   test("refreshes and retries once after a 401", async () => {
     const seenTokens: string[] = [];
     const store = new MemoryTokenStore({

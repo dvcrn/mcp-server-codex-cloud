@@ -60,7 +60,7 @@ as its argument.
 | Capability | Tools |
 | --- | --- |
 | Find environments | `list_environments`, `get_environment`, `list_environments_by_repository` |
-| Configure environments, scripts, variables, and secrets | `create_environment`, `update_environment` |
+| Configure and test environments, scripts, variables, and secrets | `create_environment`, `update_environment`, `test_environment` |
 | Start, cancel, and read tasks or diffs | `start_task`, `cancel_task`, `list_tasks`, `get_task`, `wait_for_task` |
 | Continue tasks and inspect conversation branches | `follow_up_task`, `list_task_turns`, `list_sibling_turns` |
 | Read available per-turn logs, including setup output | `get_task_logs` |
