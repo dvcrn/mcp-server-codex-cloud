@@ -4,11 +4,13 @@ import type { CodexCloudClient } from "./client.js";
 import { ApiError, AuthenticationError, CodexCloudError, TokenRefreshError } from "./errors.js";
 
 const id = z.string().trim().min(1);
-const repository = z.union([
-  z.number().int().nonnegative(),
-  z.templateLiteral(["github-", z.string().regex(/^\d+$/)]),
-]);
-const repositories = z.array(repository).min(1);
+const repository = z.templateLiteral(["github-", z.string().regex(/^\d+$/)]);
+const repositories = z
+  .array(repository)
+  .min(1)
+  .describe(
+    "GitHub repository IDs in github-NUMERIC_ID format. If you only know owner/repo, resolve its numeric ID first using the GitHub API, gh CLI, or another GitHub tool.",
+  );
 const strings = z.record(z.string(), z.string());
 const update = z.strictObject({
   label: id.optional(),
@@ -99,7 +101,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "create_environment",
-    "Create an environment using numeric GitHub repository IDs.",
+    "Create an environment using repository IDs in github-NUMERIC_ID format. If only owner/repo is known, first look up its numeric ID with the GitHub API, gh CLI, or another GitHub tool.",
     { label: id, repositories, machineId: id.optional() },
     false,
     (a, signal) => client.environments.create(defined(a), { signal }),

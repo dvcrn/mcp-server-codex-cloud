@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { AuthController } from "../src/auth.js";
-import { EnvironmentsApi, githubRepositoryId } from "../src/environments.js";
+import { EnvironmentsApi, githubRepositoryId, type RepositoryId } from "../src/environments.js";
 import { HttpClient } from "../src/http.js";
 import { MemoryTokenStore } from "../src/token-store.js";
 
@@ -14,7 +14,7 @@ describe("EnvironmentsApi", () => {
 
     const environment = await api.create({
       label: "dummy-test",
-      repositories: [1165432182],
+      repositories: ["github-1165432182"],
     });
 
     expect(body).toEqual({
@@ -93,9 +93,11 @@ test("githubRepositoryId rejects non-numeric IDs", async () => {
   expect(githubRepositoryId("123")).toBe("github-123");
   expect(() => githubRepositoryId("owner/repo")).toThrow();
   const api = makeApi(async () => Response.json(environmentWire()));
-  expect(api.create({ label: "test", repositories: ["github-not-numeric"] })).rejects.toThrow(
-    "github-NUMERIC_ID",
-  );
+  for (const repository of [1165432182, "github-not-numeric"] as unknown as RepositoryId[]) {
+    expect(api.create({ label: "test", repositories: [repository] })).rejects.toThrow(
+      "github-NUMERIC_ID",
+    );
+  }
 });
 
 function makeApi(

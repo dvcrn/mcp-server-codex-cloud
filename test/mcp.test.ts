@@ -20,7 +20,19 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
   await server.connect(a);
   await client.connect(b);
   try {
-    expect((await client.listTools()).tools).toHaveLength(14);
+    const tools = (await client.listTools()).tools;
+    expect(tools).toHaveLength(14);
+    const createEnvironment = tools.find((tool) => tool.name === "create_environment");
+    expect(createEnvironment?.description).toContain("first look up its numeric ID");
+    expect(JSON.stringify(createEnvironment?.inputSchema)).toContain(
+      "resolve its numeric ID first using the GitHub API, gh CLI, or another GitHub tool",
+    );
+    const invalidRepository = await client.callTool({
+      name: "create_environment",
+      arguments: { label: "test", repositories: [1165432182] },
+    });
+    expect(invalidRepository.isError).toBe(true);
+    expect(requests).toHaveLength(0);
     const invalid = await client.callTool({
       name: "start_task",
       arguments: { environmentId: "env", prompt: "hi", attempts: 5 },

@@ -47,7 +47,7 @@ export interface CloudEnvironment {
   shareTargets: unknown[];
 }
 
-export type RepositoryId = number | `github-${string}`;
+export type RepositoryId = `github-${string}`;
 
 export interface CreateEnvironmentInput {
   label: string;
@@ -231,8 +231,7 @@ function environmentInput(input: UpdateEnvironmentInput): Record<string, unknown
 }
 
 function repositoryId(id: RepositoryId): string {
-  if (typeof id === "number") return githubRepositoryId(id);
-  if (!/^github-\d+$/.test(id)) {
+  if (typeof id !== "string" || !/^github-\d+$/.test(id)) {
     throw new CodexCloudError("Repository ID must use the github-NUMERIC_ID format");
   }
   return id;
