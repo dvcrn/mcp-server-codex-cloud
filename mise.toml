@@ -30,6 +30,18 @@ description = "Validate npm package contents"
 depends = ["build"]
 run = "bun pm pack --dry-run"
 
+[tasks."version:patch"]
+description = "Bump the patch version, commit, and tag without a v prefix"
+run = 'npm version patch --tag-version-prefix="" --message="Release %s"'
+
+[tasks."version:minor"]
+description = "Bump the minor version, commit, and tag without a v prefix"
+run = 'npm version minor --tag-version-prefix="" --message="Release %s"'
+
+[tasks."version:major"]
+description = "Bump the major version, commit, and tag without a v prefix"
+run = 'npm version major --tag-version-prefix="" --message="Release %s"'
+
 [tasks."worker:types"]
 run = "bun run wrangler types"
 

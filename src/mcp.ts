@@ -1,5 +1,6 @@
 import { McpServer, type ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
+import packageJson from "../package.json" with { type: "json" };
 import type { CodexCloudClient } from "./client.js";
 import { ApiError, AuthenticationError, CodexCloudError, TokenRefreshError } from "./errors.js";
 
@@ -47,7 +48,7 @@ const update = z.strictObject({
 });
 
 export function createMcpServer(client: CodexCloudClient): McpServer {
-  const server = new McpServer({ name: "mcp-server-codex-cloud", version: "0.1.0" });
+  const server = new McpServer({ name: "mcp-server-codex-cloud", version: packageJson.version });
   function tool<S extends z.ZodRawShape>(
     name: string,
     description: string,
