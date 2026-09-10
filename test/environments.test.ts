@@ -58,7 +58,7 @@ describe("EnvironmentsApi", () => {
       return Response.json(environmentWire());
     });
 
-    await api.update("env-1", {
+    const environment = await api.update("env-1", {
       setupScript: "echo setup\necho done",
       environmentVariables: { FOO: "bar" },
       secrets: { FOO_SECRET: "secret" },
@@ -78,6 +78,25 @@ describe("EnvironmentsApi", () => {
         safe_methods_only: null,
       },
     });
+    expect(environment.warnings).toEqual([
+      "Custom setup and maintenance scripts are ignored because autoSetupEnabled is true. Set it to false for these scripts to run.",
+    ]);
+  });
+
+  test("does not warn when custom scripts are enabled", async () => {
+    const api = makeApi(async () =>
+      Response.json({
+        ...environmentWire(),
+        auto_setup_settings: { use_auto_setup: false },
+      }),
+    );
+
+    const environment = await api.update("env-1", {
+      setupScript: "echo setup",
+      autoSetupEnabled: false,
+    });
+
+    expect(environment.warnings).toBeUndefined();
   });
 
   test("patches only supplied settings", async () => {
@@ -168,6 +187,7 @@ function environmentWire(): object {
       post_setup_cache_enabled: true,
       cache_invalidation_key: "",
     },
+    auto_setup_settings: { use_auto_setup: true },
     permissions: { can_write: true, can_delete: true },
     created_at: 1,
   };

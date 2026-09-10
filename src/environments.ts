@@ -57,6 +57,7 @@ export interface CloudEnvironment {
   authTranslatorEnabled: boolean;
   shareSettings: string | null;
   shareTargets: unknown[];
+  warnings?: string[];
 }
 
 export type RepositoryId = `github-${string}`;
@@ -183,7 +184,17 @@ export class EnvironmentsApi {
         signal: options.signal,
       },
     );
-    return mapEnvironment(environment);
+    const result = mapEnvironment(environment);
+    if (
+      result.autoSetupEnabled === true
+      && (input.setupScript !== undefined
+        || input.maintenanceScript !== undefined)
+    ) {
+      result.warnings = [
+        "Custom setup and maintenance scripts are ignored because autoSetupEnabled is true. Set it to false for these scripts to run.",
+      ];
+    }
+    return result;
   }
 }
 

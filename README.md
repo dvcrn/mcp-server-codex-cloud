@@ -72,6 +72,12 @@ consume your Codex account usage. Environment updates replace supplied scripts
 and variable or secret maps. If a follow-up response is lost, check the turn
 history before resubmitting.
 
+Set `autoSetupEnabled` to `false` when using a custom setup or maintenance
+script. Automatic setup ignores both custom scripts. The setup script initializes
+an uncached environment before Codex saves its container state. When that cached
+container resumes, Codex checks out the task branch and runs the optional
+maintenance script, which can update dependencies installed from an older commit.
+
 ## Deploy to Cloudflare
 
 Deploy from a clone of this repository with mise and a Cloudflare account.

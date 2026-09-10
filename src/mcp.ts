@@ -29,8 +29,18 @@ const update = z.strictObject({
   machineId: id.optional(),
   description: z.string().nullable().optional(),
   workspaceDirectory: z.string().nullable().optional(),
-  setupScript: z.string().optional(),
-  maintenanceScript: z.string().optional(),
+  setupScript: z
+    .string()
+    .describe(
+      "Script used to initialize an uncached environment. Set autoSetupEnabled to false for this script to run.",
+    )
+    .optional(),
+  maintenanceScript: z
+    .string()
+    .describe(
+      "Optional script run after the task branch is checked out when a cached container resumes. Use it to update dependencies installed by an older setup run. Set autoSetupEnabled to false for this script to run.",
+    )
+    .optional(),
   environmentVariables: strings.optional(),
   secrets: strings.optional(),
   networkAccess: z
@@ -47,7 +57,12 @@ const update = z.strictObject({
     ])
     .nullable()
     .optional(),
-  autoSetupEnabled: z.boolean().optional(),
+  autoSetupEnabled: z
+    .boolean()
+    .describe(
+      "Use Codex automatic dependency setup. When true, custom setup and maintenance scripts are ignored. Set false to use those scripts.",
+    )
+    .optional(),
   cache: z
     .strictObject({
       postSetupCacheEnabled: z.boolean(),
@@ -134,7 +149,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "update_environment",
-    "Update environment settings. Provided scripts and maps replace their current values; omitted fields are preserved.",
+    "Update environment settings. Provided scripts and maps replace their current values; omitted fields are preserved. Automatic setup ignores custom setup and maintenance scripts, so set autoSetupEnabled to false when using either script.",
     { id, update },
     false,
     (a, signal) =>

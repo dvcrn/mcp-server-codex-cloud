@@ -19,6 +19,7 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
         id: "env",
         label: "Dummy",
         machine_id: "machine",
+        auto_setup_settings: { use_auto_setup: true },
       });
     },
   });
@@ -54,7 +55,7 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
     });
     expect(invalid.isError).toBe(true);
     expect(requests).toHaveLength(0);
-    await client.callTool({
+    const updateEnvironment = await client.callTool({
       name: "update_environment",
       arguments: {
         id: "env",
@@ -73,6 +74,18 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
         cache_invalidation_key: "",
       },
     });
+    expect(JSON.stringify(updateEnvironment)).toContain(
+      "Custom setup and maintenance scripts are ignored",
+    );
+    const updateEnvironmentTool = tools.find(
+      (tool) => tool.name === "update_environment",
+    );
+    expect(updateEnvironmentTool?.description).toContain(
+      "set autoSetupEnabled to false",
+    );
+    expect(JSON.stringify(updateEnvironmentTool?.inputSchema)).toContain(
+      "when a cached container resumes",
+    );
     const refreshed = await client.callTool({
       name: "refresh_auth",
       arguments: {},
