@@ -191,6 +191,22 @@ describe("EnvironmentsApi", () => {
       },
     });
   });
+
+  test("reports environment test error events as failure", async () => {
+    const api = makeApi(async (input) => {
+      if (String(input).endsWith("/environments/test")) {
+        return new Response(
+          'data: {"type":"server_error","key":"system","line":"An unexpected error occurred"}\n\n',
+        );
+      }
+      return Response.json([environmentWire()]);
+    });
+
+    expect(await api.test("env-1")).toMatchObject({
+      success: false,
+      logs: [{ type: "server_error" }],
+    });
+  });
 });
 
 test("githubRepositoryId rejects non-numeric IDs", async () => {

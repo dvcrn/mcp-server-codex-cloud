@@ -239,7 +239,7 @@ export class EnvironmentsApi {
     });
     const logs = parseTestLogs(stream);
     return {
-      success: !logs.some((log) => log.type === "error"),
+      success: !logs.some((log) => isTestError(log.type)),
       logs,
     };
   }
@@ -477,4 +477,8 @@ function parseTestLogs(stream: string): EnvironmentTestLog[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isTestError(type: string): boolean {
+  return type === "error" || type.endsWith("_error");
 }
