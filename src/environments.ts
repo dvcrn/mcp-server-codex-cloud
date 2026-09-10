@@ -16,6 +16,18 @@ export interface EnvironmentCacheSettings {
   cacheInvalidationKey: string;
 }
 
+const defaultEnvironmentVariables: Record<string, string> = {
+  CODEX_ENV_PYTHON_VERSION: "3.12",
+  CODEX_ENV_NODE_VERSION: "20",
+  CODEX_ENV_RUBY_VERSION: "3.4.4",
+  CODEX_ENV_RUST_VERSION: "1.89.0",
+  CODEX_ENV_GO_VERSION: "1.24.3",
+  CODEX_ENV_BUN_VERSION: "1.2.14",
+  CODEX_ENV_PHP_VERSION: "8.4",
+  CODEX_ENV_JAVA_VERSION: "21",
+  CODEX_ENV_SWIFT_VERSION: "6.1",
+};
+
 export interface EnvironmentPermissions {
   canWrite: boolean;
   canDelete: boolean;
@@ -145,6 +157,12 @@ export class EnvironmentsApi {
           label: input.label,
           repos: input.repositories.map(repositoryId),
           machine_id: input.machineId ?? "wham-public/wham-universal",
+          description: "",
+          workspace_dir: "/workspace",
+          setup: [""],
+          maintenance_setup: [""],
+          env_vars: defaultEnvironmentVariables,
+          auto_setup_settings: { use_auto_setup: true },
         },
         signal: options.signal,
       },
