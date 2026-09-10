@@ -32,6 +32,9 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
       arguments: { label: "test", repositories: [1165432182] },
     });
     expect(invalidRepository.isError).toBe(true);
+    expect(JSON.stringify(invalidRepository)).toContain(
+      "Repository ID must be a string in github-NUMERIC_ID format, for example github-23123123",
+    );
     expect(requests).toHaveLength(0);
     const invalid = await client.callTool({
       name: "start_task",

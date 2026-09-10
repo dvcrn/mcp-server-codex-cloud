@@ -2,10 +2,15 @@ import { McpServer, type ServerContext } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { CodexCloudClient } from "./client.js";
+import type { RepositoryId } from "./environments.js";
 import { ApiError, AuthenticationError, CodexCloudError, TokenRefreshError } from "./errors.js";
 
 const id = z.string().trim().min(1);
-const repository = z.templateLiteral(["github-", z.string().regex(/^\d+$/)]);
+const repositoryIdError =
+  "Repository ID must be a string in github-NUMERIC_ID format, for example github-23123123";
+const repository = z
+  .string({ error: repositoryIdError })
+  .regex(/^github-\d+$/, repositoryIdError) as z.ZodType<RepositoryId>;
 const repositories = z
   .array(repository)
   .min(1)
