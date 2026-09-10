@@ -75,8 +75,8 @@ history before resubmitting.
 ## Deploy to Cloudflare
 
 Deploy from a clone of this repository with mise and a Cloudflare account.
-The server uses a Worker and a KV namespace. Upstream requests use Worker fetch;
-ChatGPT may reject these requests with HTTP 403.
+The server uses a Worker, a KV namespace, and a VPC network binding. Upstream
+requests leave through the configured Cloudflare Tunnel.
 
 1. Install dependencies and sign in to Cloudflare:
 
@@ -88,8 +88,9 @@ ChatGPT may reject these requests with HTTP 403.
    ```
 
 2. Edit the included [wrangler.jsonc](./wrangler.jsonc): replace `account_id`
-   with your account ID and choose your Worker `name`. Create a KV namespace
-   and set its ID on the `CODEX_AUTH` binding:
+   with your account ID, choose your Worker `name`, and set the `CODEX_EGRESS`
+   tunnel ID to a Cloudflare Tunnel available in your account. Create a KV
+   namespace and set its ID on the `CODEX_AUTH` binding:
 
    ```bash
    mise exec -- bun run wrangler kv namespace create CODEX_AUTH

@@ -1,8 +1,11 @@
-import { expect, spyOn, test } from "bun:test";
+import { expect, mock, test } from "bun:test";
 import type { Fetch } from "../src/auth.js";
 import worker, { type Env } from "./index.js";
 
-function fixture() {
+function fixture(
+  egressFetch: Fetch = async () =>
+    new Response("Unexpected egress", { status: 500 }),
+) {
   const values = new Map<string, string>();
   const env: Env = {
     ADMIN_TOKEN: "test-admin-token-with-at-least-32-characters",
@@ -19,6 +22,7 @@ function fixture() {
         values.set(key, value);
       },
     } as unknown as KVNamespace,
+    CODEX_EGRESS: { fetch: egressFetch } as Fetcher,
   };
   const request = (path: string, body?: unknown) =>
     new Request(`https://worker.test${path}`, {
@@ -64,8 +68,17 @@ test("Worker seeds KV credentials and enforces admin authentication", async () =
   ).toBe(404);
 });
 
-test("MCP calls upstream directly with the stored access token and reports upstream rejection", async () => {
-  const { env, request } = fixture();
+test("MCP calls upstream through VPC egress and reports upstream rejection", async () => {
+  const egressFetch = mock(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const forwarded = new Request(input, init);
+      expect(new URL(forwarded.url).hostname).toBe("chatgpt.com");
+      expect(forwarded.headers.get("authorization")).toBe("Bearer access");
+      expect(forwarded.redirect).toBe("manual");
+      return Response.json({ private: "upstream detail" }, { status: 403 });
+    },
+  );
+  const { env, request } = fixture(egressFetch);
   await worker.fetch(
     request("/admin/tokens", {
       accessToken: "access",
@@ -73,32 +86,18 @@ test("MCP calls upstream directly with the stored access token and reports upstr
     }),
     env,
   );
-  const directFetch: Fetch = async (input, init) => {
-    const forwarded = new Request(input, init);
-    expect(new URL(forwarded.url).hostname).toBe("chatgpt.com");
-    expect(forwarded.headers.get("authorization")).toBe("Bearer access");
-    expect(forwarded.redirect).toBe("manual");
-    return Response.json({ private: "upstream detail" }, { status: 403 });
-  };
-  const upstream = spyOn(globalThis, "fetch").mockImplementation(
-    directFetch as typeof fetch,
+  const response = await worker.fetch(
+    request("/mcp", {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/call",
+      params: { name: "list_tasks", arguments: { limit: 1 } },
+    }),
+    env,
   );
-  try {
-    const response = await worker.fetch(
-      request("/mcp", {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: { name: "list_tasks", arguments: { limit: 1 } },
-      }),
-      env,
-    );
-    const body = await response.text();
-    expect(response.status).toBe(200);
-    expect(body).toContain("403");
-    expect(body).not.toContain("upstream detail");
-    expect(upstream).toHaveBeenCalledTimes(1);
-  } finally {
-    upstream.mockRestore();
-  }
+  const body = await response.text();
+  expect(response.status).toBe(200);
+  expect(body).toContain("403");
+  expect(body).not.toContain("upstream detail");
+  expect(egressFetch).toHaveBeenCalledTimes(1);
 });

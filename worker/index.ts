@@ -8,6 +8,7 @@ import { KvTokenStore } from "./token-store.js";
 export interface Env {
   ADMIN_TOKEN: string;
   CODEX_AUTH: KVNamespace;
+  CODEX_EGRESS: Fetcher;
 }
 
 const tokenSchema = z.strictObject({
@@ -20,16 +21,18 @@ const tokenSchema = z.strictObject({
 
 class CodexAccount {
   readonly #store: KvTokenStore;
+  readonly #egress: Fetcher;
 
   constructor(env: Env) {
     this.#store = new KvTokenStore(env.CODEX_AUTH);
+    this.#egress = env.CODEX_EGRESS;
   }
 
   async handle(request: Request): Promise<Response> {
     const client = new CodexCloudClient({
       tokenStore: this.#store,
       userAgent: "codex-cli",
-      fetch: upstreamFetch,
+      fetch: upstreamFetch(this.#egress),
     });
     const handler = createMcpHandler(() => createMcpServer(client), {
       responseMode: "auto",
@@ -64,20 +67,24 @@ class CodexAccount {
   }
 }
 
-const upstreamFetch: Fetch = (input, init) => {
-  const request = new Request(input, init);
-  const url = new URL(request.url);
-  if (
-    url.protocol !== "https:"
-    || !["chatgpt.com", "auth.openai.com"].includes(url.hostname)
-  ) {
-    throw new Error("Unsupported upstream");
-  }
-  return fetch(request, {
-    redirect: "manual",
-    signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
-  });
-};
+const upstreamFetch =
+  (egress: Fetcher): Fetch =>
+  (input, init) => {
+    const request = new Request(input, init);
+    const url = new URL(request.url);
+    if (
+      url.protocol !== "https:"
+      || !["chatgpt.com", "auth.openai.com"].includes(url.hostname)
+    ) {
+      throw new Error("Unsupported upstream");
+    }
+    return egress.fetch(
+      new Request(request, {
+        redirect: "manual",
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
+      }),
+    );
+  };
 
 interface Route {
   /** Methods this route accepts, in the order advertised by `Allow`. */

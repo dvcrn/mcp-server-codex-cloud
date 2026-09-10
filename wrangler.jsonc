@@ -28,5 +28,12 @@
       "binding": "CODEX_AUTH",
       "id": "179d6d51004e46898f0d40385f88f1f4"
     }
+  ],
+  "vpc_networks": [
+    {
+      "binding": "CODEX_EGRESS",
+      "tunnel_id": "ce0561f2-73c2-486f-98ee-1a2f2e72ffa8",
+      "remote": true
+    }
   ]
 }
