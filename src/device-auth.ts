@@ -13,7 +13,10 @@ const startSchema = z.object({
   user_code: nonempty,
   interval: z.union([z.number(), z.string()]).optional(),
 });
-const approvalSchema = z.object({ authorization_code: nonempty, code_verifier: nonempty });
+const approvalSchema = z.object({
+  authorization_code: nonempty,
+  code_verifier: nonempty,
+});
 const credentialsSchema = z.object({
   access_token: nonempty,
   refresh_token: nonempty,
@@ -61,16 +64,24 @@ export class DeviceAuth {
 
   async start(): Promise<DeviceAuthStatus> {
     const current = await this.status();
-    if (current.status === "pending") return current;
-    const response = await this.post("/api/accounts/deviceauth/usercode", { client_id: clientId });
+    if (current.status === "pending") {
+      return current;
+    }
+    const response = await this.post("/api/accounts/deviceauth/usercode", {
+      client_id: clientId,
+    });
     if (!response.ok) {
       await discardBody(response);
       throw new DeviceAuthError(
         `Device authorization could not be started (HTTP ${response.status})`,
       );
     }
-    const parsed = startSchema.safeParse(await response.json().catch(() => null));
-    if (!parsed.success) throw new DeviceAuthError("Invalid device authorization response");
+    const parsed = startSchema.safeParse(
+      await response.json().catch(() => null),
+    );
+    if (!parsed.success) {
+      throw new DeviceAuthError("Invalid device authorization response");
+    }
     const rawInterval = Number(parsed.data.interval ?? 5);
     const intervalMs =
       Number.isFinite(rawInterval) && rawInterval > 0
@@ -96,8 +107,12 @@ export class DeviceAuth {
 
   async poll(): Promise<DeviceAuthStatus> {
     const session = await this.session();
-    if (!session) return { status: "idle" };
-    if (session.status !== "pending" || this.now() < session.nextPollAt) return this.view(session);
+    if (!session) {
+      return { status: "idle" };
+    }
+    if (session.status !== "pending" || this.now() < session.nextPollAt) {
+      return this.view(session);
+    }
     session.nextPollAt = this.now() + session.intervalMs;
     await this.store.saveSession(session);
     const response = await this.post("/api/accounts/deviceauth/token", {
@@ -106,21 +121,29 @@ export class DeviceAuth {
     });
     session.nextPollAt = this.now() + session.intervalMs;
     await this.store.saveSession(session);
-    if (response.status === 403 || response.status === 404 || response.status >= 500) {
+    if (
+      response.status === 403
+      || response.status === 404
+      || response.status >= 500
+    ) {
       await discardBody(response);
       return this.view(session);
     }
     const body: unknown = await response.json().catch(() => null);
     if (!response.ok) {
       const error = z
-        .object({ error: z.union([z.string(), z.object({ code: z.string() })]) })
+        .object({
+          error: z.union([z.string(), z.object({ code: z.string() })]),
+        })
         .safeParse(body);
       const code = error.success
         ? typeof error.data.error === "string"
           ? error.data.error
           : error.data.error.code
         : undefined;
-      if (code === "deviceauth_authorization_pending") return this.view(session);
+      if (code === "deviceauth_authorization_pending") {
+        return this.view(session);
+      }
       if (code === "slow_down" || response.status === 429) {
         session.intervalMs += 5000;
         session.nextPollAt = this.now() + session.intervalMs;
@@ -130,7 +153,9 @@ export class DeviceAuth {
       return this.finish("failed");
     }
     const approval = approvalSchema.safeParse(body);
-    if (!approval.success) return this.finish("failed");
+    if (!approval.success) {
+      return this.finish("failed");
+    }
     // An interrupted one-use code exchange must require a fresh login, never replay the code.
     await this.finish("failed");
     const tokenResponse = await this.upstreamFetch(`${authBase}/oauth/token`, {
@@ -150,16 +175,24 @@ export class DeviceAuth {
       await discardBody(tokenResponse);
       return { status: "failed" };
     }
-    const credentials = credentialsSchema.safeParse(await tokenResponse.json().catch(() => null));
-    if (!credentials.success) return { status: "failed" };
+    const credentials = credentialsSchema.safeParse(
+      await tokenResponse.json().catch(() => null),
+    );
+    if (!credentials.success) {
+      return { status: "failed" };
+    }
     const accountId = readAccountId(credentials.data.access_token);
-    if (!accountId) return { status: "failed" };
+    if (!accountId) {
+      return { status: "failed" };
+    }
     const tokens: CodexTokens = {
       accessToken: credentials.data.access_token,
       refreshToken: credentials.data.refresh_token,
       accountId,
       lastRefresh: new Date(this.now()).toISOString(),
-      ...(credentials.data.id_token ? { idToken: credentials.data.id_token } : {}),
+      ...(credentials.data.id_token
+        ? { idToken: credentials.data.id_token }
+        : {}),
     };
     await this.store.complete(tokens);
     return { status: "authenticated" };
@@ -174,19 +207,26 @@ export class DeviceAuth {
     return session;
   }
 
-  private async finish(status: "failed" | "expired"): Promise<DeviceAuthStatus> {
+  private async finish(
+    status: "failed" | "expired",
+  ): Promise<DeviceAuthStatus> {
     await this.store.saveSession({ status });
     return { status };
   }
 
   private view(session: DeviceAuthSession): DeviceAuthStatus {
-    if (session.status !== "pending") return { status: session.status };
+    if (session.status !== "pending") {
+      return { status: session.status };
+    }
     return {
       status: "pending",
       verificationUrl: `${authBase}/codex/device`,
       userCode: session.userCode,
       expiresAt: new Date(session.expiresAt).toISOString(),
-      retryAfterSeconds: Math.max(1, Math.ceil((session.nextPollAt - this.now()) / 1000)),
+      retryAfterSeconds: Math.max(
+        1,
+        Math.ceil((session.nextPollAt - this.now()) / 1000),
+      ),
     };
   }
 
@@ -203,16 +243,23 @@ export class DeviceAuth {
 
 function readAccountId(token: string): string | undefined {
   const parsed = z
-    .object({ "https://api.openai.com/auth": z.object({ chatgpt_account_id: nonempty }) })
+    .object({
+      "https://api.openai.com/auth": z.object({ chatgpt_account_id: nonempty }),
+    })
     .safeParse(jwtPayload(token));
-  return parsed.success ? parsed.data["https://api.openai.com/auth"].chatgpt_account_id : undefined;
+  return parsed.success
+    ? parsed.data["https://api.openai.com/auth"].chatgpt_account_id
+    : undefined;
 }
 
 /**
  * Back a device login with an in-process session and persist the resulting
  * credentials, for clients that hold the whole flow in one process.
  */
-export function fileDeviceAuth(tokenStore: TokenStore, upstreamFetch: Fetch = fetch): DeviceAuth {
+export function fileDeviceAuth(
+  tokenStore: TokenStore,
+  upstreamFetch: Fetch = fetch,
+): DeviceAuth {
   let session: DeviceAuthSession | undefined;
   return new DeviceAuth(
     {
@@ -237,14 +284,23 @@ export async function waitForDeviceLogin(
 ): Promise<void> {
   signal.throwIfAborted();
   let status = await auth.start();
-  if (status.status === "pending") showCode(status);
+  if (status.status === "pending") {
+    showCode(status);
+  }
   while (status.status === "pending") {
     const remainingMs = Date.parse(status.expiresAt) - Date.now();
-    if (remainingMs <= 0) throw new Error("Device authorization expired; start auth again");
-    await delay(Math.min(status.retryAfterSeconds * 1000, remainingMs), undefined, { signal });
+    if (remainingMs <= 0) {
+      throw new Error("Device authorization expired; start auth again");
+    }
+    await delay(
+      Math.min(status.retryAfterSeconds * 1000, remainingMs),
+      undefined,
+      { signal },
+    );
     signal.throwIfAborted();
     status = await auth.poll();
   }
-  if (status.status !== "authenticated")
+  if (status.status !== "authenticated") {
     throw new Error("Device authorization failed; start auth again");
+  }
 }

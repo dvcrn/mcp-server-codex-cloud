@@ -4,10 +4,18 @@ import type { CodexTokens } from "./token-store.js";
 /** Drop undefined-valued keys so results satisfy `exactOptionalPropertyTypes`. */
 export function compactTokens(tokens: CodexTokens): CodexTokens {
   const compact: CodexTokens = { accessToken: tokens.accessToken };
-  if (tokens.accountId !== undefined) compact.accountId = tokens.accountId;
-  if (tokens.refreshToken !== undefined) compact.refreshToken = tokens.refreshToken;
-  if (tokens.idToken !== undefined) compact.idToken = tokens.idToken;
-  if (tokens.lastRefresh !== undefined) compact.lastRefresh = tokens.lastRefresh;
+  if (tokens.accountId !== undefined) {
+    compact.accountId = tokens.accountId;
+  }
+  if (tokens.refreshToken !== undefined) {
+    compact.refreshToken = tokens.refreshToken;
+  }
+  if (tokens.idToken !== undefined) {
+    compact.idToken = tokens.idToken;
+  }
+  if (tokens.lastRefresh !== undefined) {
+    compact.lastRefresh = tokens.lastRefresh;
+  }
   return compact;
 }
 
@@ -18,10 +26,16 @@ export function cause(error: unknown): string {
 /** Decode a JWT payload without verifying its signature; callers only read non-authoritative claims. */
 export function jwtPayload(token: string): Record<string, unknown> | undefined {
   const encoded = token.split(".")[1];
-  if (!encoded) return undefined;
+  if (!encoded) {
+    return undefined;
+  }
   try {
-    const payload: unknown = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8"));
-    return payload !== null && typeof payload === "object" && !Array.isArray(payload)
+    const payload: unknown = JSON.parse(
+      Buffer.from(encoded, "base64url").toString("utf8"),
+    );
+    return payload !== null
+      && typeof payload === "object"
+      && !Array.isArray(payload)
       ? (payload as Record<string, unknown>)
       : undefined;
   } catch {
@@ -30,7 +44,9 @@ export function jwtPayload(token: string): Record<string, unknown> | undefined {
 }
 
 export function segment(value: string): string {
-  if (!value.trim()) throw new CodexCloudError("Path identifiers must not be empty");
+  if (!value.trim()) {
+    throw new CodexCloudError("Path identifiers must not be empty");
+  }
   return encodeURIComponent(value);
 }
 

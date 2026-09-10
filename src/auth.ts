@@ -2,7 +2,10 @@ import { AuthenticationError, TokenRefreshError } from "./errors.js";
 import { cause, compactTokens, discardBody, jwtPayload } from "./internal.js";
 import type { CodexTokens, TokenStore } from "./token-store.js";
 
-export type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
+export type Fetch = (
+  input: string | URL | Request,
+  init?: RequestInit,
+) => Promise<Response>;
 
 export interface AuthControllerOptions {
   tokenStore: TokenStore;
@@ -29,7 +32,8 @@ export class AuthController {
     this.#fetch = options.fetch;
     this.#refreshUrl = options.refreshUrl ?? DEFAULT_REFRESH_URL;
     this.#oauthClientId = options.oauthClientId ?? DEFAULT_CLIENT_ID;
-    this.#refreshWindowMs = options.refreshWindowMs ?? DEFAULT_REFRESH_WINDOW_MS;
+    this.#refreshWindowMs =
+      options.refreshWindowMs ?? DEFAULT_REFRESH_WINDOW_MS;
   }
 
   public async tokens(): Promise<CodexTokens> {
@@ -51,7 +55,9 @@ export class AuthController {
   async #performRefresh(): Promise<CodexTokens> {
     const current = await this.#store.load();
     if (!current.refreshToken) {
-      throw new AuthenticationError("The access token cannot be refreshed without a refresh token");
+      throw new AuthenticationError(
+        "The access token cannot be refreshed without a refresh token",
+      );
     }
 
     let response: Response;
@@ -66,7 +72,9 @@ export class AuthController {
         }),
       });
     } catch (error) {
-      throw new TokenRefreshError(`Token refresh request failed: ${cause(error)}`);
+      throw new TokenRefreshError(
+        `Token refresh request failed: ${cause(error)}`,
+      );
     }
 
     if (!response.ok) {
@@ -85,7 +93,9 @@ export class AuthController {
     }
     const accessToken = payload.access_token;
     if (!accessToken) {
-      throw new TokenRefreshError("Token refresh response did not include an access token");
+      throw new TokenRefreshError(
+        "Token refresh response did not include an access token",
+      );
     }
 
     const refreshed = compactTokens({
@@ -114,7 +124,9 @@ function refreshResponse(value: unknown): RefreshResponse {
   const response: RefreshResponse = {};
   for (const key of ["access_token", "refresh_token", "id_token"] as const) {
     if (source[key] !== undefined) {
-      if (typeof source[key] !== "string") throw new TypeError(`Expected ${key} to be a string`);
+      if (typeof source[key] !== "string") {
+        throw new TypeError(`Expected ${key} to be a string`);
+      }
       response[key] = source[key];
     }
   }
@@ -128,7 +140,11 @@ export function accessTokenExpiresAt(accessToken: string): Date | undefined {
 
 function shouldRefresh(tokens: CodexTokens, refreshWindowMs: number): boolean {
   const expiresAt = accessTokenExpiresAt(tokens.accessToken);
-  if (expiresAt) return expiresAt.getTime() <= Date.now() + refreshWindowMs;
-  if (!tokens.lastRefresh) return false;
+  if (expiresAt) {
+    return expiresAt.getTime() <= Date.now() + refreshWindowMs;
+  }
+  if (!tokens.lastRefresh) {
+    return false;
+  }
   return Date.parse(tokens.lastRefresh) <= Date.now() - 8 * 24 * 60 * 60 * 1000;
 }

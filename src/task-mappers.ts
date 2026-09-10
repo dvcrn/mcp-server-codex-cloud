@@ -33,7 +33,11 @@ const historySchema = z.object({
 const logsSchema = z.object({
   logs: z.array(
     z.object({
-      key: z.object({ name: z.string(), type: z.string(), created_at: z.string() }),
+      key: z.object({
+        name: z.string(),
+        type: z.string(),
+        created_at: z.string(),
+      }),
       line: z.string(),
     }),
   ),
@@ -41,28 +45,35 @@ const logsSchema = z.object({
 
 export function mapTaskHistory(value: unknown): TaskHistory {
   const parsed = historySchema.safeParse(value);
-  if (!parsed.success) throw new CodexCloudError("Invalid task history response");
-  const turns: TaskTurn[] = Object.values(parsed.data.turn_mapping).map((node) => {
-    const turn = node.turn;
-    const prompt = userPrompt(turn);
-    const attempt = mapAttempt(turn);
-    return {
-      ...attempt,
-      id: node.id,
-      parentId: node.parent,
-      childIds: node.children,
-      role: string(turn.role) ?? null,
-      status: turn.turn_status === undefined ? null : attempt.status,
-      environmentId: string(turn.environment_id) ?? null,
-      messages: turn.role === "user" ? (prompt ? [prompt] : []) : attempt.messages,
-    };
-  });
+  if (!parsed.success) {
+    throw new CodexCloudError("Invalid task history response");
+  }
+  const turns: TaskTurn[] = Object.values(parsed.data.turn_mapping).map(
+    (node) => {
+      const turn = node.turn;
+      const prompt = userPrompt(turn);
+      const attempt = mapAttempt(turn);
+      return {
+        ...attempt,
+        id: node.id,
+        parentId: node.parent,
+        childIds: node.children,
+        role: string(turn.role) ?? null,
+        status: turn.turn_status === undefined ? null : attempt.status,
+        environmentId: string(turn.environment_id) ?? null,
+        messages:
+          turn.role === "user" ? (prompt ? [prompt] : []) : attempt.messages,
+      };
+    },
+  );
   return { currentTurnId: parsed.data.current_turn_id, turns };
 }
 
 export function mapTaskLogs(value: unknown): TaskLogEntry[] {
   const parsed = logsSchema.safeParse(value);
-  if (!parsed.success) throw new CodexCloudError("Invalid task logs response");
+  if (!parsed.success) {
+    throw new CodexCloudError("Invalid task logs response");
+  }
   return parsed.data.logs.map(({ key, line }) => ({
     name: key.name,
     type: key.type,
@@ -79,9 +90,13 @@ export function mapTaskSummary(wire: TaskListItemWire): TaskSummary {
   return {
     id: wire.id,
     title: wire.title ?? "<untitled>",
-    status: normalizeStatus(string(latest?.turn_status) ?? string(display?.state)),
+    status: normalizeStatus(
+      string(latest?.turn_status) ?? string(display?.state),
+    ),
     updatedAt: timestamp(
-      wire.updated_at ?? number(latest?.updated_at) ?? number(latest?.created_at),
+      wire.updated_at
+        ?? number(latest?.updated_at)
+        ?? number(latest?.created_at),
     ),
     environmentLabel: string(display?.environment_label) ?? null,
     diffStats: {
@@ -89,28 +104,40 @@ export function mapTaskSummary(wire: TaskListItemWire): TaskSummary {
       linesAdded: number(stats?.lines_added) ?? 0,
       linesRemoved: number(stats?.lines_removed) ?? 0,
     },
-    isReview: Array.isArray(wire.pull_requests) && wire.pull_requests.length > 0,
+    isReview:
+      Array.isArray(wire.pull_requests) && wire.pull_requests.length > 0,
     attemptCount: siblings ? siblings.length + 1 : null,
   };
 }
 
-export function mapTaskDetails(id: string, wire: Record<string, unknown>): TaskDetails {
+export function mapTaskDetails(
+  id: string,
+  wire: Record<string, unknown>,
+): TaskDetails {
   const task = object(wire.task);
   const assistant = object(wire.current_assistant_turn);
   const diffTurn = object(wire.current_diff_task_turn);
   const user = object(wire.current_user_turn);
   const active = assistant ?? diffTurn;
-  const display = object(wire.task_status_display) ?? object(task?.task_status_display);
+  const display =
+    object(wire.task_status_display) ?? object(task?.task_status_display);
   const latest = object(display?.latest_turn_status_display);
-  const messages = [...messagesFromTurn(diffTurn), ...messagesFromTurn(assistant)];
-  const fallbackMessages = messages.length === 0 ? worklogMessages(assistant) : [];
+  const messages = [
+    ...messagesFromTurn(diffTurn),
+    ...messagesFromTurn(assistant),
+  ];
+  const fallbackMessages =
+    messages.length === 0 ? worklogMessages(assistant) : [];
   const error = object(active?.error);
   return {
     id: string(task?.id) ?? id,
     title: string(task?.title) ?? null,
-    environmentId: string(active?.environment_id) ?? string(task?.environment_id) ?? null,
+    environmentId:
+      string(active?.environment_id) ?? string(task?.environment_id) ?? null,
     status: normalizeStatus(
-      string(active?.turn_status) ?? string(latest?.turn_status) ?? string(display?.state),
+      string(active?.turn_status)
+        ?? string(latest?.turn_status)
+        ?? string(display?.state),
     ),
     prompt: userPrompt(user),
     messages: messages.length > 0 ? messages : fallbackMessages,
@@ -119,7 +146,10 @@ export function mapTaskDetails(id: string, wire: Record<string, unknown>): TaskD
     siblingTurnIds: strings(active?.sibling_turn_ids),
     attemptPlacement: number(active?.attempt_placement) ?? null,
     error: error
-      ? { code: string(error.code) ?? null, message: string(error.message) ?? null }
+      ? {
+          code: string(error.code) ?? null,
+          message: string(error.message) ?? null,
+        }
       : null,
     raw: wire,
   };
@@ -137,10 +167,14 @@ export function mapAttempt(wire: Record<string, unknown>): TaskAttempt {
 }
 
 function messagesFromTurn(turn: Record<string, unknown> | undefined): string[] {
-  if (!turn) return [];
+  if (!turn) {
+    return [];
+  }
   const messages: string[] = [];
   for (const item of objects(turn.output_items)) {
-    if (item.type !== "message") continue;
+    if (item.type !== "message") {
+      continue;
+    }
     messages.push(...textContent(item.content));
   }
   return messages;
@@ -150,29 +184,55 @@ function worklogMessages(turn: Record<string, unknown> | undefined): string[] {
   const worklog = object(turn?.worklog);
   const messages: string[] = [];
   for (const item of objects(worklog?.messages)) {
-    if (string(object(item.author)?.role) !== "assistant") continue;
+    if (string(object(item.author)?.role) !== "assistant") {
+      continue;
+    }
     messages.push(...textContent(object(item.content)?.parts));
   }
   return messages;
 }
 
 function userPrompt(turn: Record<string, unknown> | undefined): string | null {
-  if (!turn) return null;
-  for (const item of [...objects(turn.input_items), ...objects(turn.output_items)]) {
-    if (item.type === "message" && (item.role === "user" || item.role === undefined)) {
+  if (!turn) {
+    return null;
+  }
+  for (const item of [
+    ...objects(turn.input_items),
+    ...objects(turn.output_items),
+  ]) {
+    if (
+      item.type === "message"
+      && (item.role === "user" || item.role === undefined)
+    ) {
       const text = textContent(item.content);
-      if (text.length > 0) return text.join("\n");
+      if (text.length > 0) {
+        return text.join("\n");
+      }
     }
   }
   return null;
 }
 
-function diffFromTurn(turn: Record<string, unknown> | undefined): string | null {
-  if (!turn) return null;
+function diffFromTurn(
+  turn: Record<string, unknown> | undefined,
+): string | null {
+  if (!turn) {
+    return null;
+  }
   for (const item of objects(turn.output_items)) {
-    if (item.type === "output_diff" && typeof item.diff === "string" && item.diff) return item.diff;
+    if (
+      item.type === "output_diff"
+      && typeof item.diff === "string"
+      && item.diff
+    ) {
+      return item.diff;
+    }
     const outputDiff = object(item.output_diff);
-    if (item.type === "pr" && typeof outputDiff?.diff === "string" && outputDiff.diff) {
+    if (
+      item.type === "pr"
+      && typeof outputDiff?.diff === "string"
+      && outputDiff.diff
+    ) {
       return outputDiff.diff;
     }
   }
@@ -182,9 +242,15 @@ function diffFromTurn(turn: Record<string, unknown> | undefined): string | null 
 function textContent(value: unknown): string[] {
   const output: string[] = [];
   for (const part of array(value) ?? []) {
-    if (typeof part === "string" && part.trim()) output.push(part);
+    if (typeof part === "string" && part.trim()) {
+      output.push(part);
+    }
     const content = object(part);
-    if (content?.content_type === "text" && typeof content.text === "string" && content.text) {
+    if (
+      content?.content_type === "text"
+      && typeof content.text === "string"
+      && content.text
+    ) {
       output.push(content.text);
     }
   }
@@ -226,7 +292,9 @@ function objects(value: unknown): Record<string, unknown>[] {
 }
 
 function strings(value: unknown): string[] {
-  return (array(value) ?? []).filter((item): item is string => typeof item === "string");
+  return (array(value) ?? []).filter(
+    (item): item is string => typeof item === "string",
+  );
 }
 
 function string(value: unknown): string | undefined {

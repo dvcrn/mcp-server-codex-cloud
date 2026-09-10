@@ -11,7 +11,10 @@ import type { CodexTokens } from "../src/token-store.js";
 function fixture(responses: Response[]) {
   let now = Date.now();
   let session: DeviceAuthSession | undefined;
-  let tokens: CodexTokens = { accessToken: "existing", refreshToken: "existing-refresh" };
+  let tokens: CodexTokens = {
+    accessToken: "existing",
+    refreshToken: "existing-refresh",
+  };
   const calls: { url: string; init: RequestInit | undefined }[] = [];
   const store: DeviceAuthStore = {
     loadSession: async () => structuredClone(session),
@@ -26,7 +29,9 @@ function fixture(responses: Response[]) {
   const upstream: Fetch = async (input, init) => {
     calls.push({ url: String(input), init });
     const response = responses.shift();
-    if (!response) throw new Error("Unexpected upstream request");
+    if (!response) {
+      throw new Error("Unexpected upstream request");
+    }
     return response;
   };
   const create = () => new DeviceAuth(store, upstream, () => now);
@@ -43,9 +48,16 @@ function fixture(responses: Response[]) {
 }
 
 const start = () =>
-  Response.json({ device_auth_id: "private-device", user_code: "ABCD-EFGH", interval: "5" });
+  Response.json({
+    device_auth_id: "private-device",
+    user_code: "ABCD-EFGH",
+    interval: "5",
+  });
 const approval = () =>
-  Response.json({ authorization_code: "private-code", code_verifier: "private-verifier" });
+  Response.json({
+    authorization_code: "private-code",
+    code_verifier: "private-verifier",
+  });
 const accessToken = `header.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "account-1" } })).toString("base64url")}.signature`;
 
 test("device login resumes, throttles polls, exchanges once and never returns credentials", async () => {
@@ -60,7 +72,11 @@ test("device login resumes, throttles polls, exchanges once and never returns cr
     }),
   ]);
   const initial = await f.auth.start();
-  expect(initial).toMatchObject({ status: "pending", userCode: "ABCD-EFGH", retryAfterSeconds: 5 });
+  expect(initial).toMatchObject({
+    status: "pending",
+    userCode: "ABCD-EFGH",
+    retryAfterSeconds: 5,
+  });
   const resumed = f.create();
   expect(await resumed.start()).toEqual(initial);
   expect(await resumed.poll()).toEqual(initial);
@@ -83,7 +99,9 @@ test("device login resumes, throttles polls, exchanges once and never returns cr
     device_auth_id: "private-device",
     user_code: "ABCD-EFGH",
   });
-  expect(Object.fromEntries(new URLSearchParams(String(f.calls[3]?.init?.body)))).toEqual({
+  expect(
+    Object.fromEntries(new URLSearchParams(String(f.calls[3]?.init?.body))),
+  ).toEqual({
     grant_type: "authorization_code",
     client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
     code: "private-code",
@@ -102,7 +120,10 @@ test("device login resumes, throttles polls, exchanges once and never returns cr
 
 test("device auth refuses upstream redirects without exposing their destination", async () => {
   const f = fixture([
-    new Response(null, { status: 302, headers: { location: "https://example.com/private" } }),
+    new Response(null, {
+      status: 302,
+      headers: { location: "https://example.com/private" },
+    }),
   ]);
   await expect(f.auth.start()).rejects.toThrow(
     "Device authorization could not be started (HTTP 302)",
@@ -111,12 +132,21 @@ test("device auth refuses upstream redirects without exposing their destination"
 });
 
 test("slow_down persists increased interval across restarts and expires without polling", async () => {
-  const f = fixture([start(), Response.json({ error: "slow_down" }, { status: 400 })]);
+  const f = fixture([
+    start(),
+    Response.json({ error: "slow_down" }, { status: 400 }),
+  ]);
   await f.auth.start();
   f.advance();
-  expect(await f.auth.poll()).toMatchObject({ status: "pending", retryAfterSeconds: 10 });
+  expect(await f.auth.poll()).toMatchObject({
+    status: "pending",
+    retryAfterSeconds: 10,
+  });
   f.advance();
-  expect(await f.create().poll()).toMatchObject({ status: "pending", retryAfterSeconds: 5 });
+  expect(await f.create().poll()).toMatchObject({
+    status: "pending",
+    retryAfterSeconds: 5,
+  });
   expect(f.calls).toHaveLength(2);
   f.advance(15 * 60_000);
   expect(await f.auth.poll()).toEqual({ status: "expired" });
@@ -129,15 +159,18 @@ test.each([
   Response.json({ access_token: "not-a-jwt", refresh_token: "secret" }),
   Response.json({ access_token: accessToken }),
   Response.json({ error: "secret-upstream-body" }, { status: 400 }),
-])("invalid exchanges preserve existing login and cannot replay approval", async (invalid) => {
-  const f = fixture([start(), approval(), invalid]);
-  await f.auth.start();
-  f.advance();
-  expect(await f.auth.poll()).toEqual({ status: "failed" });
-  expect(await f.create().poll()).toEqual({ status: "failed" });
-  expect(f.calls).toHaveLength(3);
-  expect(f.tokens().accessToken).toBe("existing");
-});
+])(
+  "invalid exchanges preserve existing login and cannot replay approval",
+  async (invalid) => {
+    const f = fixture([start(), approval(), invalid]);
+    await f.auth.start();
+    f.advance();
+    expect(await f.auth.poll()).toEqual({ status: "failed" });
+    expect(await f.create().poll()).toEqual({ status: "failed" });
+    expect(f.calls).toHaveLength(3);
+    expect(f.tokens().accessToken).toBe("existing");
+  },
+);
 
 test("lost token response requires a new code and keeps previous credentials", async () => {
   const f = fixture([start(), approval()]);
@@ -151,7 +184,9 @@ test("lost token response requires a new code and keeps previous credentials", a
 test.each([undefined, "nonsense", "", -1, "1e309"])(
   "invalid or absent poll interval uses five seconds: %s",
   async (interval) => {
-    const f = fixture([Response.json({ device_auth_id: "device", user_code: "code", interval })]);
+    const f = fixture([
+      Response.json({ device_auth_id: "device", user_code: "code", interval }),
+    ]);
     expect(await f.auth.start()).toMatchObject({ retryAfterSeconds: 5 });
   },
 );
@@ -160,7 +195,10 @@ test("transient and pending replies do not replace tokens or leak upstream error
   const f = fixture([
     start(),
     new Response("secret-upstream-body", { status: 503 }),
-    Response.json({ error: { code: "deviceauth_authorization_pending" } }, { status: 400 }),
+    Response.json(
+      { error: { code: "deviceauth_authorization_pending" } },
+      { status: 400 },
+    ),
     Response.json({ error: "access_denied" }, { status: 400 }),
   ]);
   await f.auth.start();

@@ -11,18 +11,60 @@
   },
   "formatter": {
     "enabled": true,
+    "useEditorconfig": false,
+    "formatWithErrors": false,
     "indentStyle": "space",
     "indentWidth": 2,
-    "lineWidth": 100
+    "lineEnding": "lf",
+    "lineWidth": 80,
+    "attributePosition": "auto",
+    "bracketSameLine": false,
+    "bracketSpacing": true,
+    "delimiterSpacing": false,
+    "trailingNewline": true
   },
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "style": {
+        "useBlockStatements": "error",
+        "useCollapsedElseIf": "error",
+        "useCollapsedIf": "error",
+        "noNegationElse": "error",
+        "noUselessElse": "error",
+        "useConst": "error",
+        "useSingleVarDeclarator": "error",
+        "useTemplate": "error",
+        "useShorthandAssign": "error",
+        "useAtIndex": "error",
+        "noSubstr": "error",
+        "useNumberNamespace": "error",
+        "useForOf": "error",
+        "noYodaExpression": "error",
+        "useThrowNewError": "error",
+        "useThrowOnlyError": "error",
+        "useImportType": "error",
+        "useExportType": "error",
+        "useNodejsImportProtocol": "error",
+        "noCommonJs": "error",
+        "useAsConstAssertion": "error",
+        "noInferrableTypes": "error",
+        "noNonNullAssertion": "error",
+        "noParameterAssign": "error",
+        "useDefaultParameterLast": "error",
+        "useConsistentArrayType": "error",
+        "useConsistentBuiltinInstantiation": "error"
+      }
     }
   },
   "javascript": {
     "formatter": {
+      "arrowParentheses": "always",
+      "expand": "auto",
+      "jsxQuoteStyle": "double",
+      "operatorLinebreak": "before",
+      "quoteProperties": "asNeeded",
       "quoteStyle": "double",
       "semicolons": "always",
       "trailingCommas": "all"

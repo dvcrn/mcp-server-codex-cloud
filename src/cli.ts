@@ -11,12 +11,17 @@ import { CodexAuthFileTokenStore } from "./token-store.js";
 try {
   const { values, positionals } = parseArgs({
     allowPositionals: true,
-    options: { "auth-file": { type: "string" }, help: { type: "boolean", short: "h" } },
+    options: {
+      "auth-file": { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
   });
-  if (positionals.length > 1 || (positionals[0] && positionals[0] !== "auth"))
+  if (positionals.length > 1 || (positionals[0] && positionals[0] !== "auth")) {
     throw new Error("Unknown command");
+  }
   const authFile =
-    values["auth-file"] ?? join(homedir(), ".config", "mcp-server-codex-cloud", "auth.json");
+    values["auth-file"]
+    ?? join(homedir(), ".config", "mcp-server-codex-cloud", "auth.json");
   const tokenStore = new CodexAuthFileTokenStore({ authFile });
   if (values.help) {
     process.stdout.write(
@@ -31,7 +36,10 @@ try {
       const auth = fileDeviceAuth(tokenStore, (input, init) =>
         fetch(input, {
           ...init,
-          signal: AbortSignal.any([abort.signal, ...(init?.signal ? [init.signal] : [])]),
+          signal: AbortSignal.any([
+            abort.signal,
+            ...(init?.signal ? [init.signal] : []),
+          ]),
         }),
       );
       await waitForDeviceLogin(

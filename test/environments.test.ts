@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { AuthController } from "../src/auth.js";
-import { EnvironmentsApi, githubRepositoryId, type RepositoryId } from "../src/environments.js";
+import {
+  EnvironmentsApi,
+  githubRepositoryId,
+  type RepositoryId,
+} from "../src/environments.js";
 import { HttpClient } from "../src/http.js";
 import { MemoryTokenStore } from "../src/token-store.js";
 
@@ -69,11 +73,16 @@ describe("EnvironmentsApi", () => {
       return Response.json(environmentWire());
     });
 
-    await api.update("env/with slash", { cache: { postSetupCacheEnabled: false } });
+    await api.update("env/with slash", {
+      cache: { postSetupCacheEnabled: false },
+    });
 
     expect(url).toEndWith("/wham/environments/env%2Fwith%20slash");
     expect(body).toEqual({
-      cache_settings: { post_setup_cache_enabled: false, cache_invalidation_key: "" },
+      cache_settings: {
+        post_setup_cache_enabled: false,
+        cache_invalidation_key: "",
+      },
     });
   });
 
@@ -84,8 +93,12 @@ describe("EnvironmentsApi", () => {
       return Response.json([environmentWire()]);
     });
 
-    expect(await api.listByRepository("owner name", "repo/name")).toHaveLength(1);
-    expect(url).toEndWith("/wham/environments/by-repo/github/owner%20name/repo%2Fname");
+    expect(await api.listByRepository("owner name", "repo/name")).toHaveLength(
+      1,
+    );
+    expect(url).toEndWith(
+      "/wham/environments/by-repo/github/owner%20name/repo%2Fname",
+    );
   });
 });
 
@@ -93,15 +106,21 @@ test("githubRepositoryId rejects non-numeric IDs", async () => {
   expect(githubRepositoryId("123")).toBe("github-123");
   expect(() => githubRepositoryId("owner/repo")).toThrow();
   const api = makeApi(async () => Response.json(environmentWire()));
-  for (const repository of [1165432182, "github-not-numeric"] as unknown as RepositoryId[]) {
-    expect(api.create({ label: "test", repositories: [repository] })).rejects.toThrow(
-      "github-NUMERIC_ID",
-    );
+  for (const repository of [
+    1165432182,
+    "github-not-numeric",
+  ] as unknown as RepositoryId[]) {
+    expect(
+      api.create({ label: "test", repositories: [repository] }),
+    ).rejects.toThrow("github-NUMERIC_ID");
   }
 });
 
 function makeApi(
-  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+  fetch: (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>,
 ): EnvironmentsApi {
   const auth = new AuthController({
     tokenStore: new MemoryTokenStore({ accessToken: "access" }),
@@ -129,7 +148,10 @@ function environmentWire(): object {
       denylist_domains: null,
       safe_methods_only: null,
     },
-    cache_settings: { post_setup_cache_enabled: true, cache_invalidation_key: "" },
+    cache_settings: {
+      post_setup_cache_enabled: true,
+      cache_invalidation_key: "",
+    },
     permissions: { can_write: true, can_delete: true },
     created_at: 1,
   };

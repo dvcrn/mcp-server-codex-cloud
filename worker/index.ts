@@ -38,7 +38,10 @@ class CodexAccount {
     try {
       const response = await handler.fetch(request);
       const body = response.body ? await response.arrayBuffer() : null;
-      return new Response(body, { status: response.status, headers: response.headers });
+      return new Response(body, {
+        status: response.status,
+        headers: response.headers,
+      });
     } finally {
       await handler.close();
     }
@@ -46,11 +49,12 @@ class CodexAccount {
 
   async seed(input: unknown): Promise<Response> {
     const parsed = tokenSchema.safeParse(input);
-    if (!parsed.success)
+    if (!parsed.success) {
       return reply(
         "Expected accessToken and optional refreshToken, accountId, idToken, lastRefresh",
         400,
       );
+    }
     await this.#store.save(parsed.data);
     return Response.json({ stored: true });
   }
@@ -63,8 +67,12 @@ class CodexAccount {
 const upstreamFetch: Fetch = (input, init) => {
   const request = new Request(input, init);
   const url = new URL(request.url);
-  if (url.protocol !== "https:" || !["chatgpt.com", "auth.openai.com"].includes(url.hostname))
+  if (
+    url.protocol !== "https:"
+    || !["chatgpt.com", "auth.openai.com"].includes(url.hostname)
+  ) {
     throw new Error("Unsupported upstream");
+  }
   return fetch(request, {
     redirect: "manual",
     signal: AbortSignal.any([request.signal, AbortSignal.timeout(30_000)]),
@@ -108,15 +116,18 @@ const routes: Record<string, Route> = {
       // The admin credential authenticates the edge, never the MCP session.
       const headers = new Headers(request.headers);
       headers.delete("authorization");
-      return account.handle(new Request(request.url, { method: "POST", headers, body }));
+      return account.handle(
+        new Request(request.url, { method: "POST", headers, body }),
+      );
     },
   },
 };
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 32)
+    if (!env.ADMIN_TOKEN || env.ADMIN_TOKEN.length < 32) {
       return reply("Server authentication is not configured", 503);
+    }
     const authorization = request.headers.get("authorization") ?? "";
     if (!(await matches(authorization, `Bearer ${env.ADMIN_TOKEN}`))) {
       return new Response("Unauthorized", {
@@ -126,21 +137,33 @@ export default {
     }
     const url = new URL(request.url);
     const origin = request.headers.get("origin");
-    if (origin && origin !== url.origin) return reply("Origin is not allowed", 403);
+    if (origin && origin !== url.origin) {
+      return reply("Origin is not allowed", 403);
+    }
 
     const route = routes[url.pathname];
-    if (!route) return reply("Not found", 404);
-    if (!route.methods.includes(request.method))
+    if (!route) {
+      return reply("Not found", 404);
+    }
+    if (!route.methods.includes(request.method)) {
       return new Response("Method not allowed", {
         status: 405,
-        headers: { Allow: route.methods.join(", "), "Cache-Control": "no-store" },
+        headers: {
+          Allow: route.methods.join(", "),
+          "Cache-Control": "no-store",
+        },
       });
+    }
 
     let body = "";
     if (route.bodyLimit !== undefined && request.method !== "GET") {
-      if (route.json && !isJson(request)) return reply("Expected application/json", 415);
+      if (route.json && !isJson(request)) {
+        return reply("Expected application/json", 415);
+      }
       const read = await limitedBody(request, route.bodyLimit);
-      if (read === null) return reply("Request body too large", 413);
+      if (read === null) {
+        return reply("Request body too large", 413);
+      }
       body = read;
       if (route.json) {
         try {
@@ -153,7 +176,9 @@ export default {
 
     try {
       const account = new CodexAccount(env);
-      return secure(await route.handle({ account, request, method: request.method, body }));
+      return secure(
+        await route.handle({ account, request, method: request.method, body }),
+      );
     } catch (error) {
       // Log for the operator; the response stays generic so upstream bodies,
       // which can echo environment secrets, never reach the client.
@@ -164,11 +189,19 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 function isJson(request: Request): boolean {
-  return request.headers.get("content-type")?.toLowerCase().startsWith("application/json") ?? false;
+  return (
+    request.headers
+      .get("content-type")
+      ?.toLowerCase()
+      .startsWith("application/json") ?? false
+  );
 }
 
 function reply(message: string, status: number): Response {
-  return new Response(message, { status, headers: { "Cache-Control": "no-store" } });
+  return new Response(message, {
+    status,
+    headers: { "Cache-Control": "no-store" },
+  });
 }
 
 function secure(response: Response): Response {
@@ -184,21 +217,32 @@ function secure(response: Response): Response {
  */
 async function matches(actual: string, expected: string): Promise<boolean> {
   const digest = async (value: string) =>
-    new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)),
+    );
   const [left, right] = await Promise.all([digest(actual), digest(expected)]);
   let difference = 0;
-  for (let i = 0; i < left.length; i++) difference |= (left[i] ?? 0) ^ (right[i] ?? 0);
+  for (let i = 0; i < left.length; i++) {
+    difference |= (left[i] ?? 0) ^ (right[i] ?? 0);
+  }
   return difference === 0;
 }
 
-async function limitedBody(request: Request, limit: number): Promise<string | null> {
+async function limitedBody(
+  request: Request,
+  limit: number,
+): Promise<string | null> {
   const reader = request.body?.getReader();
-  if (!reader) return "";
+  if (!reader) {
+    return "";
+  }
   const chunks: Uint8Array[] = [];
   let total = 0;
   for (;;) {
     const { done, value } = await reader.read();
-    if (done) break;
+    if (done) {
+      break;
+    }
     total += value.byteLength;
     if (total > limit) {
       await reader.cancel();

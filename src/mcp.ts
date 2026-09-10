@@ -3,7 +3,12 @@ import { z } from "zod";
 import packageJson from "../package.json" with { type: "json" };
 import type { CodexCloudClient } from "./client.js";
 import type { RepositoryId } from "./environments.js";
-import { ApiError, AuthenticationError, CodexCloudError, TokenRefreshError } from "./errors.js";
+import {
+  ApiError,
+  AuthenticationError,
+  CodexCloudError,
+  TokenRefreshError,
+} from "./errors.js";
 
 const id = z.string().trim().min(1);
 const repositoryIdError =
@@ -53,13 +58,19 @@ const update = z.strictObject({
 });
 
 export function createMcpServer(client: CodexCloudClient): McpServer {
-  const server = new McpServer({ name: "mcp-server-codex-cloud", version: packageJson.version });
+  const server = new McpServer({
+    name: "mcp-server-codex-cloud",
+    version: packageJson.version,
+  });
   function tool<S extends z.ZodRawShape>(
     name: string,
     description: string,
     shape: S,
     readOnly: boolean,
-    run: (input: z.infer<z.ZodObject<S>>, signal: AbortSignal) => Promise<unknown>,
+    run: (
+      input: z.infer<z.ZodObject<S>>,
+      signal: AbortSignal,
+    ) => Promise<unknown>,
   ) {
     server.registerTool(
       name,
@@ -76,16 +87,25 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
       async (input, ctx: ServerContext) => {
         try {
           const result = await run(input, ctx.mcpReq.signal);
-          return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(result) }],
+          };
         } catch (error) {
           const message = toolError(error, name);
-          return { isError: true, content: [{ type: "text" as const, text: message }] };
+          return {
+            isError: true,
+            content: [{ type: "text" as const, text: message }],
+          };
         }
       },
     );
   }
-  tool("list_environments", "List Codex Cloud environments.", {}, true, (_, signal) =>
-    client.environments.list({ signal }),
+  tool(
+    "list_environments",
+    "List Codex Cloud environments.",
+    {},
+    true,
+    (_, signal) => client.environments.list({ signal }),
   );
   tool(
     "get_environment",
@@ -117,7 +137,8 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     "Update environment settings. Provided scripts and maps replace their current values; omitted fields are preserved.",
     { id, update },
     false,
-    (a, signal) => client.environments.update(a.id, defined(a.update), { signal }),
+    (a, signal) =>
+      client.environments.update(a.id, defined(a.update), { signal }),
   );
   tool(
     "list_tasks",
@@ -136,7 +157,9 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     "Start a Codex Cloud task. This consumes account usage.",
     {
       environmentId: id,
-      prompt: z.string().refine((value) => value.trim().length > 0, "Prompt must not be empty"),
+      prompt: z
+        .string()
+        .refine((value) => value.trim().length > 0, "Prompt must not be empty"),
       branch: id.optional(),
       attempts: z.number().int().min(1).max(4).optional(),
       qaMode: z.boolean().optional(),
@@ -145,8 +168,12 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     false,
     (a, signal) => client.tasks.create(defined(a), { signal }),
   );
-  tool("get_task", "Get task status, messages, diff, and raw details.", { id }, true, (a, signal) =>
-    client.tasks.get(a.id, { signal }),
+  tool(
+    "get_task",
+    "Get task status, messages, diff, and raw details.",
+    { id },
+    true,
+    (a, signal) => client.tasks.get(a.id, { signal }),
   );
   tool(
     "follow_up_task",
@@ -154,7 +181,9 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     {
       taskId: id,
       turnId: id,
-      prompt: z.string().refine((value) => value.trim().length > 0, "Prompt must not be empty"),
+      prompt: z
+        .string()
+        .refine((value) => value.trim().length > 0, "Prompt must not be empty"),
       qaMode: z.boolean().optional(),
     },
     false,
@@ -179,7 +208,8 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     "List alternative attempts for a task turn.",
     { taskId: id, turnId: id },
     true,
-    (a, signal) => client.tasks.listSiblingTurns(a.taskId, a.turnId, { signal }),
+    (a, signal) =>
+      client.tasks.listSiblingTurns(a.taskId, a.turnId, { signal }),
   );
   tool(
     "wait_for_task",
@@ -214,12 +244,16 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
  * Zod fills absent optional fields with `undefined`, but `exactOptionalPropertyTypes`
  * requires them omitted. Drop those keys so parsed input satisfies the API types.
  */
-type Defined<T> = T extends object ? { [K in keyof T]: Defined<Exclude<T[K], undefined>> } : T;
+type Defined<T> = T extends object
+  ? { [K in keyof T]: Defined<Exclude<T[K], undefined>> }
+  : T;
 
 function defined<T extends Record<string, unknown>>(value: T): Defined<T> {
   const result: Record<string, unknown> = {};
   for (const [key, entry] of Object.entries(value)) {
-    if (entry !== undefined) result[key] = entry;
+    if (entry !== undefined) {
+      result[key] = entry;
+    }
   }
   return result as Defined<T>;
 }
@@ -232,7 +266,11 @@ function defined<T extends Record<string, unknown>>(value: T): Defined<T> {
  * messages raised by this package are safe and worth surfacing.
  */
 function toolError(error: unknown, name: string): string {
-  if (name === "wait_for_task" && error instanceof DOMException && error.name === "TimeoutError") {
+  if (
+    name === "wait_for_task"
+    && error instanceof DOMException
+    && error.name === "TimeoutError"
+  ) {
     return "Timed out waiting for the task. Poll get_task or wait_for_task again.";
   }
   if (error instanceof ApiError) {
@@ -249,13 +287,18 @@ function toolError(error: unknown, name: string): string {
   if (error instanceof TokenRefreshError && error.status) {
     return `Codex OAuth refresh failed with HTTP ${error.status}. Renew or reseed credentials.`;
   }
-  if (error instanceof AuthenticationError)
+  if (error instanceof AuthenticationError) {
     return "Codex authentication failed. Renew or reseed credentials.";
+  }
   // Raised by this package's own input validation, so the text is safe to show.
-  if (error instanceof CodexCloudError) return error.message;
-  if (name === "start_task")
+  if (error instanceof CodexCloudError) {
+    return error.message;
+  }
+  if (name === "start_task") {
     return "Task creation failed or its result was lost. Check list_tasks before starting another task.";
-  if (name === "follow_up_task")
+  }
+  if (name === "follow_up_task") {
     return "Follow-up failed or its result was lost. Check list_task_turns before submitting it again.";
+  }
   return "Codex Cloud operation failed. Check the inputs and retry.";
 }

@@ -7,7 +7,11 @@ function fixture() {
   const storage = {
     get: async (key: string, type?: string) => {
       const value = values.get(key);
-      return value === undefined ? null : type === "json" ? JSON.parse(value) : value;
+      return value === undefined
+        ? null
+        : type === "json"
+          ? JSON.parse(value)
+          : value;
     },
     put: async (key: string, value: string) => {
       values.set(key, value);
@@ -18,13 +22,22 @@ function fixture() {
 
 test("KV preserves seeded credentials but never exposes refresh tokens to automatic refresh", async () => {
   const { store, values } = fixture();
-  const tokens = { accessToken: "access", refreshToken: "refresh", accountId: "owner" };
+  const tokens = {
+    accessToken: "access",
+    refreshToken: "refresh",
+    accountId: "owner",
+  };
   expect(await store.configured()).toBe(false);
   await store.save(tokens);
   expect(JSON.parse(values.get("tokens") ?? "")).toEqual(tokens);
   expect(await store.configured()).toBe(true);
-  expect(await store.load()).toEqual({ accessToken: "access", accountId: "owner" });
-  await expect(store.save({ accessToken: "rotated" }, tokens)).rejects.toThrow("reseed");
+  expect(await store.load()).toEqual({
+    accessToken: "access",
+    accountId: "owner",
+  });
+  await expect(store.save({ accessToken: "rotated" }, tokens)).rejects.toThrow(
+    "reseed",
+  );
   expect(JSON.parse(values.get("tokens") ?? "")).toEqual(tokens);
   const auth = new AuthController({
     tokenStore: store,

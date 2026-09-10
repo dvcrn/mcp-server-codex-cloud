@@ -1,11 +1,17 @@
 import { expect, test } from "bun:test";
 import { CodexCloudClient } from "../src/client.js";
 
-function client(response: unknown, requests: { url: string; body: unknown }[] = []) {
+function client(
+  response: unknown,
+  requests: { url: string; body: unknown }[] = [],
+) {
   return new CodexCloudClient({
     tokens: { accessToken: "test" },
     fetch: async (url, init) => {
-      requests.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : null });
+      requests.push({
+        url: String(url),
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
       return Response.json(response);
     },
   });
@@ -14,7 +20,11 @@ function client(response: unknown, requests: { url: string; body: unknown }[] = 
 test("follow-up uses an existing turn and returns the newly created turn IDs", async () => {
   const requests: { url: string; body: unknown }[] = [];
   const sdk = client(
-    { task: { id: "task" }, user_turn: { id: "new-user" }, turn: { id: "new-assistant" } },
+    {
+      task: { id: "task" },
+      user_turn: { id: "new-user" },
+      turn: { id: "new-assistant" },
+    },
     requests,
   );
   expect(
@@ -34,9 +44,17 @@ test("follow-up uses an existing turn and returns the newly created turn IDs", a
     {
       url: "https://chatgpt.com/backend-api/wham/tasks",
       body: {
-        follow_up: { task_id: "task", turn_id: "previous", run_environment_in_qa_mode: true },
+        follow_up: {
+          task_id: "task",
+          turn_id: "previous",
+          run_environment_in_qa_mode: true,
+        },
         input_items: [
-          { type: "message", role: "user", content: [{ content_type: "text", text: "Continue" }] },
+          {
+            type: "message",
+            role: "user",
+            content: [{ content_type: "text", text: "Continue" }],
+          },
         ],
       },
     },
@@ -50,8 +68,9 @@ test("follow-up rejects missing IDs, empty prompts and incomplete responses", as
     { taskId: "", turnId: "turn", prompt: "hi" },
     { taskId: "task", turnId: " ", prompt: "hi" },
     { taskId: "task", turnId: "turn", prompt: " " },
-  ])
+  ]) {
     await expect(sdk.tasks.followUp(input)).rejects.toThrow();
+  }
   expect(requests).toHaveLength(0);
   await expect(
     sdk.tasks.followUp({ taskId: "task", turnId: "turn", prompt: "hi" }),
@@ -98,7 +117,10 @@ test("history preserves branches and messages without returning embedded environ
           environment_id: "env",
           environment: { secrets: { secret: "private-fixture" } },
           output_items: [
-            { type: "message", content: [{ content_type: "text", text: "Answer A" }] },
+            {
+              type: "message",
+              content: [{ content_type: "text", text: "Answer A" }],
+            },
           ],
         },
       },
@@ -141,7 +163,11 @@ test("history preserves branches and messages without returning embedded environ
 });
 
 test("logs preserve ordering, blank lines and timestamps without inventing a timezone", async () => {
-  const key = { name: "setup", type: "UserSetupScript", created_at: "2026-09-07T03:18:07.481184" };
+  const key = {
+    name: "setup",
+    type: "UserSetupScript",
+    created_at: "2026-09-07T03:18:07.481184",
+  };
   const requests: { url: string; body: unknown }[] = [];
   const sdk = client(
     {
@@ -154,8 +180,18 @@ test("logs preserve ordering, blank lines and timestamps without inventing a tim
   );
   const logs = await sdk.tasks.getLogs("task/a", "task/a~turn?b");
   expect(logs).toEqual([
-    { name: "setup", type: "UserSetupScript", createdAt: key.created_at, line: "first\nsecond" },
-    { name: "setup", type: "UserSetupScript", createdAt: key.created_at, line: "" },
+    {
+      name: "setup",
+      type: "UserSetupScript",
+      createdAt: key.created_at,
+      line: "first\nsecond",
+    },
+    {
+      name: "setup",
+      type: "UserSetupScript",
+      createdAt: key.created_at,
+      line: "",
+    },
   ]);
   expect(requests[0]?.url).toBe(
     "https://chatgpt.com/backend-api/wham/tasks/task%2Fa/turns/task%2Fa~turn%3Fb/logs",
@@ -163,11 +199,15 @@ test("logs preserve ordering, blank lines and timestamps without inventing a tim
 });
 
 test("history and log APIs distinguish empty responses from malformed responses", async () => {
-  expect(await client({ current_turn_id: null, turn_mapping: {} }).tasks.listTurns("task")).toEqual(
-    { currentTurnId: null, turns: [] },
-  );
+  expect(
+    await client({ current_turn_id: null, turn_mapping: {} }).tasks.listTurns(
+      "task",
+    ),
+  ).toEqual({ currentTurnId: null, turns: [] });
   expect(await client({ logs: [] }).tasks.getLogs("task", "turn")).toEqual([]);
-  await expect(client({}).tasks.listTurns("task")).rejects.toThrow("Invalid task history response");
+  await expect(client({}).tasks.listTurns("task")).rejects.toThrow(
+    "Invalid task history response",
+  );
   await expect(
     client({ logs: [{ line: "missing key" }] }).tasks.getLogs("task", "turn"),
   ).rejects.toThrow("Invalid task logs response");
@@ -180,7 +220,8 @@ test("task details use the active turn environment, with a legacy fallback", asy
   });
   expect((await sdk.tasks.get("task")).environmentId).toBe("current");
   expect(
-    (await client({ task: { environment_id: "legacy" } }).tasks.get("task")).environmentId,
+    (await client({ task: { environment_id: "legacy" } }).tasks.get("task"))
+      .environmentId,
   ).toBe("legacy");
 });
 
@@ -197,7 +238,10 @@ test("aborting a follow-up does not retry a request whose outcome is unknown", a
   });
   const signal = abort.signal;
   await expect(
-    sdk.tasks.followUp({ taskId: "task", turnId: "turn", prompt: "hello" }, { signal }),
+    sdk.tasks.followUp(
+      { taskId: "task", turnId: "turn", prompt: "hello" },
+      { signal },
+    ),
   ).rejects.toThrow();
   expect(calls).toBe(1);
 });

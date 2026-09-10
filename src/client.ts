@@ -36,16 +36,24 @@ export class CodexCloudClient {
       throw new CodexCloudError("Provide exactly one of tokens or tokenStore");
     }
     let tokenStore: TokenStore;
-    if (options.tokenStore) tokenStore = options.tokenStore;
-    else if (options.tokens) tokenStore = new MemoryTokenStore(options.tokens);
-    else throw new CodexCloudError("Provide exactly one of tokens or tokenStore");
+    if (options.tokenStore) {
+      tokenStore = options.tokenStore;
+    } else if (options.tokens) {
+      tokenStore = new MemoryTokenStore(options.tokens);
+    } else {
+      throw new CodexCloudError("Provide exactly one of tokens or tokenStore");
+    }
 
     const fetch = options.fetch ?? defaultFetch();
     this.#auth = new AuthController({
       tokenStore,
       fetch,
-      ...(options.refreshUrl === undefined ? {} : { refreshUrl: options.refreshUrl }),
-      ...(options.oauthClientId === undefined ? {} : { oauthClientId: options.oauthClientId }),
+      ...(options.refreshUrl === undefined
+        ? {}
+        : { refreshUrl: options.refreshUrl }),
+      ...(options.oauthClientId === undefined
+        ? {}
+        : { oauthClientId: options.oauthClientId }),
       ...(options.refreshWindowMs === undefined
         ? {}
         : { refreshWindowMs: options.refreshWindowMs }),
@@ -54,7 +62,9 @@ export class CodexCloudClient {
       auth: this.#auth,
       fetch,
       ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
-      ...(options.userAgent === undefined ? {} : { userAgent: options.userAgent }),
+      ...(options.userAgent === undefined
+        ? {}
+        : { userAgent: options.userAgent }),
     });
     this.environments = new EnvironmentsApi(http);
     this.tasks = new TasksApi(http);
@@ -64,7 +74,9 @@ export class CodexCloudClient {
     options: CodexHomeClientOptions = {},
   ): Promise<CodexCloudClient> {
     const { authFile, ...clientOptions } = options;
-    const tokenStore = new CodexAuthFileTokenStore(authFile === undefined ? {} : { authFile });
+    const tokenStore = new CodexAuthFileTokenStore(
+      authFile === undefined ? {} : { authFile },
+    );
     await tokenStore.load();
     return new CodexCloudClient({ ...clientOptions, tokenStore });
   }
@@ -80,7 +92,9 @@ export class CodexCloudClient {
 
 function defaultFetch(): Fetch {
   if (typeof globalThis.fetch !== "function") {
-    throw new CodexCloudError("This SDK requires a runtime with global fetch support");
+    throw new CodexCloudError(
+      "This SDK requires a runtime with global fetch support",
+    );
   }
   return globalThis.fetch.bind(globalThis) as Fetch;
 }

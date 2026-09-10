@@ -88,10 +88,15 @@ export interface EnvironmentCacheSettingsInput {
 export class EnvironmentsApi {
   public constructor(private readonly http: HttpClient) {}
 
-  public async list(options: { signal?: AbortSignal } = {}): Promise<CloudEnvironment[]> {
-    const environments = await this.http.request<EnvironmentWire[]>("/environments", {
-      signal: options.signal,
-    });
+  public async list(
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CloudEnvironment[]> {
+    const environments = await this.http.request<EnvironmentWire[]>(
+      "/environments",
+      {
+        signal: options.signal,
+      },
+    );
     return environments.map(mapEnvironment);
   }
 
@@ -109,9 +114,16 @@ export class EnvironmentsApi {
     return environments.map(mapEnvironment);
   }
 
-  public async get(id: string, options: { signal?: AbortSignal } = {}): Promise<CloudEnvironment> {
-    const environment = (await this.list(options)).find((candidate) => candidate.id === id);
-    if (!environment) throw new CodexCloudError(`Environment ${id} was not found`);
+  public async get(
+    id: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CloudEnvironment> {
+    const environment = (await this.list(options)).find(
+      (candidate) => candidate.id === id,
+    );
+    if (!environment) {
+      throw new CodexCloudError(`Environment ${id} was not found`);
+    }
     return environment;
   }
 
@@ -119,19 +131,24 @@ export class EnvironmentsApi {
     input: CreateEnvironmentInput,
     options: { signal?: AbortSignal } = {},
   ): Promise<CloudEnvironment> {
-    if (!input.label.trim()) throw new CodexCloudError("Environment label must not be empty");
+    if (!input.label.trim()) {
+      throw new CodexCloudError("Environment label must not be empty");
+    }
     if (input.repositories.length === 0) {
       throw new CodexCloudError("At least one repository is required");
     }
-    const environment = await this.http.request<EnvironmentWire>("/environments", {
-      method: "POST",
-      body: {
-        label: input.label,
-        repos: input.repositories.map(repositoryId),
-        machine_id: input.machineId ?? "wham-public/wham-universal",
+    const environment = await this.http.request<EnvironmentWire>(
+      "/environments",
+      {
+        method: "POST",
+        body: {
+          label: input.label,
+          repos: input.repositories.map(repositoryId),
+          machine_id: input.machineId ?? "wham-public/wham-universal",
+        },
+        signal: options.signal,
       },
-      signal: options.signal,
-    });
+    );
     return mapEnvironment(environment);
   }
 
@@ -140,18 +157,23 @@ export class EnvironmentsApi {
     input: UpdateEnvironmentInput,
     options: { signal?: AbortSignal } = {},
   ): Promise<CloudEnvironment> {
-    const environment = await this.http.request<EnvironmentWire>(`/environments/${segment(id)}`, {
-      method: "PATCH",
-      body: environmentInput(input),
-      signal: options.signal,
-    });
+    const environment = await this.http.request<EnvironmentWire>(
+      `/environments/${segment(id)}`,
+      {
+        method: "PATCH",
+        body: environmentInput(input),
+        signal: options.signal,
+      },
+    );
     return mapEnvironment(environment);
   }
 }
 
 export function githubRepositoryId(id: number | string): `github-${string}` {
   const value = String(id).trim();
-  if (!/^\d+$/.test(value)) throw new CodexCloudError("GitHub repository ID must be numeric");
+  if (!/^\d+$/.test(value)) {
+    throw new CodexCloudError("GitHub repository ID must be numeric");
+  }
   return `github-${value}`;
 }
 
@@ -178,7 +200,10 @@ interface EnvironmentWire {
   secrets?: Record<string, string>;
   agent_network_access?: NetworkWire | null;
   auto_setup_settings?: { use_auto_setup?: boolean } | null;
-  cache_settings?: { post_setup_cache_enabled?: boolean; cache_invalidation_key?: string } | null;
+  cache_settings?: {
+    post_setup_cache_enabled?: boolean;
+    cache_invalidation_key?: string;
+  } | null;
   permissions?: { can_write?: boolean; can_delete?: boolean } | null;
   workspace_dir?: string | null;
   description?: string | null;
@@ -201,17 +226,37 @@ interface NetworkWire {
   safe_methods_only?: boolean | null;
 }
 
-function environmentInput(input: UpdateEnvironmentInput): Record<string, unknown> {
+function environmentInput(
+  input: UpdateEnvironmentInput,
+): Record<string, unknown> {
   const body: Record<string, unknown> = {};
-  if (input.label !== undefined) body.label = input.label;
-  if (input.repositories !== undefined) body.repos = input.repositories.map(repositoryId);
-  if (input.machineId !== undefined) body.machine_id = input.machineId;
-  if (input.description !== undefined) body.description = input.description;
-  if (input.workspaceDirectory !== undefined) body.workspace_dir = input.workspaceDirectory;
-  if (input.setupScript !== undefined) body.setup = input.setupScript;
-  if (input.maintenanceScript !== undefined) body.maintenance_setup = input.maintenanceScript;
-  if (input.environmentVariables !== undefined) body.env_vars = input.environmentVariables;
-  if (input.secrets !== undefined) body.secrets = input.secrets;
+  if (input.label !== undefined) {
+    body.label = input.label;
+  }
+  if (input.repositories !== undefined) {
+    body.repos = input.repositories.map(repositoryId);
+  }
+  if (input.machineId !== undefined) {
+    body.machine_id = input.machineId;
+  }
+  if (input.description !== undefined) {
+    body.description = input.description;
+  }
+  if (input.workspaceDirectory !== undefined) {
+    body.workspace_dir = input.workspaceDirectory;
+  }
+  if (input.setupScript !== undefined) {
+    body.setup = input.setupScript;
+  }
+  if (input.maintenanceScript !== undefined) {
+    body.maintenance_setup = input.maintenanceScript;
+  }
+  if (input.environmentVariables !== undefined) {
+    body.env_vars = input.environmentVariables;
+  }
+  if (input.secrets !== undefined) {
+    body.secrets = input.secrets;
+  }
   if (input.networkAccess !== undefined) {
     body.agent_network_access = mapNetworkInput(input.networkAccess);
   }
@@ -232,13 +277,19 @@ function environmentInput(input: UpdateEnvironmentInput): Record<string, unknown
 
 function repositoryId(id: RepositoryId): string {
   if (typeof id !== "string" || !/^github-\d+$/.test(id)) {
-    throw new CodexCloudError("Repository ID must use the github-NUMERIC_ID format");
+    throw new CodexCloudError(
+      "Repository ID must use the github-NUMERIC_ID format",
+    );
   }
   return id;
 }
 
-function mapNetworkInput(input: AgentNetworkAccessInput | "unrestricted" | null): unknown {
-  if (input === null) return null;
+function mapNetworkInput(
+  input: AgentNetworkAccessInput | "unrestricted" | null,
+): unknown {
+  if (input === null) {
+    return null;
+  }
   const value = input === "unrestricted" ? unrestrictedNetworkAccess() : input;
   return {
     mode: value.mode,
@@ -304,6 +355,8 @@ function mapEnvironment(wire: EnvironmentWire): CloudEnvironment {
 }
 
 function scripts(value: string[] | string | undefined): string[] {
-  if (value === undefined) return [];
+  if (value === undefined) {
+    return [];
+  }
   return Array.isArray(value) ? value : [value];
 }

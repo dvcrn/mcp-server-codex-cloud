@@ -9,7 +9,11 @@ function fixture() {
     CODEX_AUTH: {
       get: async (key: string, type?: string) => {
         const value = values.get(key);
-        return value === undefined ? null : type === "json" ? JSON.parse(value) : value;
+        return value === undefined
+          ? null
+          : type === "json"
+            ? JSON.parse(value)
+            : value;
       },
       put: async (key: string, value: string) => {
         values.set(key, value);
@@ -31,27 +35,42 @@ function fixture() {
 
 test("Worker seeds KV credentials and enforces admin authentication", async () => {
   const { env, values, request } = fixture();
-  expect((await worker.fetch(new Request("https://worker.test/admin/status"), env)).status).toBe(
-    401,
-  );
+  expect(
+    (await worker.fetch(new Request("https://worker.test/admin/status"), env))
+      .status,
+  ).toBe(401);
   expect(await (await worker.fetch(request("/admin/status"), env)).text()).toBe(
     '{"configured":false}',
   );
-  expect((await worker.fetch(request("/admin/tokens", {}), env)).status).toBe(400);
+  expect((await worker.fetch(request("/admin/tokens", {}), env)).status).toBe(
+    400,
+  );
   expect(
-    (await worker.fetch(request("/admin/tokens", { accessToken: "access" }), env)).status,
+    (
+      await worker.fetch(
+        request("/admin/tokens", { accessToken: "access" }),
+        env,
+      )
+    ).status,
   ).toBe(200);
-  expect(JSON.parse(values.get("tokens") ?? "")).toEqual({ accessToken: "access" });
+  expect(JSON.parse(values.get("tokens") ?? "")).toEqual({
+    accessToken: "access",
+  });
   expect(await (await worker.fetch(request("/admin/status"), env)).text()).toBe(
     '{"configured":true}',
   );
-  expect((await worker.fetch(request("/admin/auth/start", {}), env)).status).toBe(404);
+  expect(
+    (await worker.fetch(request("/admin/auth/start", {}), env)).status,
+  ).toBe(404);
 });
 
 test("MCP calls upstream directly with the stored access token and reports upstream rejection", async () => {
   const { env, request } = fixture();
   await worker.fetch(
-    request("/admin/tokens", { accessToken: "access", refreshToken: "refresh" }),
+    request("/admin/tokens", {
+      accessToken: "access",
+      refreshToken: "refresh",
+    }),
     env,
   );
   const directFetch: Fetch = async (input, init) => {
@@ -61,7 +80,9 @@ test("MCP calls upstream directly with the stored access token and reports upstr
     expect(forwarded.redirect).toBe("manual");
     return Response.json({ private: "upstream detail" }, { status: 403 });
   };
-  const upstream = spyOn(globalThis, "fetch").mockImplementation(directFetch as typeof fetch);
+  const upstream = spyOn(globalThis, "fetch").mockImplementation(
+    directFetch as typeof fetch,
+  );
   try {
     const response = await worker.fetch(
       request("/mcp", {

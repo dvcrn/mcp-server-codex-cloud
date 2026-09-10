@@ -33,7 +33,9 @@ describe("HttpClient", () => {
       return pending.promise;
     });
     const controller = new AbortController();
-    const request = client.request("/tasks/list", { signal: controller.signal });
+    const request = client.request("/tasks/list", {
+      signal: controller.signal,
+    });
     await started.promise;
     controller.abort(new Error("caller canceled"));
     await expect(request).rejects.toThrow("caller canceled");
@@ -52,7 +54,10 @@ describe("HttpClient", () => {
   test("uses WHAM routes and ChatGPT auth headers", async () => {
     let capturedUrl: string | undefined;
     let capturedHeaders: Headers | undefined;
-    const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       capturedUrl = String(input);
       capturedHeaders = new Headers(init?.headers);
       return Response.json({ items: [], cursor: null });
@@ -77,9 +82,15 @@ describe("HttpClient", () => {
       refreshToken: "refresh",
       accountId: "account",
     });
-    const fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       if (String(input).includes("oauth/token")) {
-        return Response.json({ access_token: "new-access", refresh_token: "new-refresh" });
+        return Response.json({
+          access_token: "new-access",
+          refresh_token: "new-refresh",
+        });
       }
       seenTokens.push(new Headers(init?.headers).get("authorization") ?? "");
       return seenTokens.length === 1
@@ -89,7 +100,9 @@ describe("HttpClient", () => {
     const auth = new AuthController({ tokenStore: store, fetch });
     const client = new HttpClient({ auth, fetch });
 
-    expect(await client.request<{ ok: boolean }>("/test")).toEqual({ ok: true });
+    expect(await client.request<{ ok: boolean }>("/test")).toEqual({
+      ok: true,
+    });
     expect(seenTokens).toEqual(["Bearer old-access", "Bearer new-access"]);
     expect((await store.load()).refreshToken).toBe("new-refresh");
   });
@@ -98,10 +111,16 @@ describe("HttpClient", () => {
     let cancelled = false;
     let call = 0;
     const client = makeClient(async (url) => {
-      if (String(url).includes("oauth/token"))
-        return Response.json({ access_token: "new", refresh_token: "new-refresh" });
+      if (String(url).includes("oauth/token")) {
+        return Response.json({
+          access_token: "new",
+          refresh_token: "new-refresh",
+        });
+      }
       call++;
-      if (call > 1) return Response.json({ ok: true });
+      if (call > 1) {
+        return Response.json({ ok: true });
+      }
       return new Response(
         new ReadableStream({
           start(controller) {
@@ -115,13 +134,18 @@ describe("HttpClient", () => {
       );
     }, "refresh");
 
-    expect(await client.request<{ ok: boolean }>("/test")).toEqual({ ok: true });
+    expect(await client.request<{ ok: boolean }>("/test")).toEqual({
+      ok: true,
+    });
     expect(cancelled).toBe(true);
   });
 
   test("does not expose a response body in API errors", async () => {
     const client = makeClient(async () =>
-      Response.json({ error: { message: "secret value was invalid" } }, { status: 400 }),
+      Response.json(
+        { error: { message: "secret value was invalid" } },
+        { status: 400 },
+      ),
     );
 
     const error = await client
@@ -137,12 +161,19 @@ describe("HttpClient", () => {
 });
 
 test("normalizeBaseUrl adds backend-api for ChatGPT hosts", () => {
-  expect(normalizeBaseUrl("https://chatgpt.com/")).toBe("https://chatgpt.com/backend-api");
-  expect(normalizeBaseUrl("https://example.test/")).toBe("https://example.test");
+  expect(normalizeBaseUrl("https://chatgpt.com/")).toBe(
+    "https://chatgpt.com/backend-api",
+  );
+  expect(normalizeBaseUrl("https://example.test/")).toBe(
+    "https://example.test",
+  );
 });
 
 function makeClient(
-  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+  fetch: (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>,
   refreshToken?: string,
 ): HttpClient {
   const auth = new AuthController({

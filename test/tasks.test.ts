@@ -20,7 +20,10 @@ describe("TasksApi", () => {
       startingDiff: "diff --git a/a b/a",
     });
 
-    expect(task).toEqual({ id: "task-1", url: "https://chatgpt.com/codex/tasks/task-1" });
+    expect(task).toEqual({
+      id: "task-1",
+      url: "https://chatgpt.com/codex/tasks/task-1",
+    });
     expect(body).toEqual({
       new_task: {
         environment_id: "env-1",
@@ -33,7 +36,10 @@ describe("TasksApi", () => {
           role: "user",
           content: [{ content_type: "text", text: "Count words" }],
         },
-        { type: "pre_apply_patch", output_diff: { diff: "diff --git a/a b/a" } },
+        {
+          type: "pre_apply_patch",
+          output_diff: { diff: "diff --git a/a b/a" },
+        },
       ],
       metadata: { best_of_n: 2 },
     });
@@ -55,7 +61,11 @@ describe("TasksApi", () => {
               latest_turn_status_display: {
                 turn_status: "completed",
                 sibling_turn_ids: ["other"],
-                diff_stats: { files_modified: 1, lines_added: 2, lines_removed: 3 },
+                diff_stats: {
+                  files_modified: 1,
+                  lines_added: 2,
+                  lines_removed: 3,
+                },
               },
             },
           },
@@ -64,9 +74,15 @@ describe("TasksApi", () => {
       });
     });
 
-    const page = await api.list({ environmentId: "env-1", limit: 5, cursor: "before" });
+    const page = await api.list({
+      environmentId: "env-1",
+      limit: 5,
+      cursor: "before",
+    });
 
-    expect(url).toContain("limit=5&task_filter=current&cursor=before&environment_id=env-1");
+    expect(url).toContain(
+      "limit=5&task_filter=current&cursor=before&environment_id=env-1",
+    );
     expect(page).toMatchObject({
       cursor: "next",
       tasks: [
@@ -111,10 +127,15 @@ describe("TasksApi", () => {
     let requests = 0;
     const api = makeApi(async () => {
       requests += 1;
-      return Response.json(taskDetails(requests === 1 ? "in_progress" : "completed"));
+      return Response.json(
+        taskDetails(requests === 1 ? "in_progress" : "completed"),
+      );
     });
 
-    const task = await api.waitFor("task-1", { intervalMs: 0, timeoutMs: 2000 });
+    const task = await api.waitFor("task-1", {
+      intervalMs: 0,
+      timeoutMs: 2000,
+    });
 
     expect(task.status).toBe("completed");
     expect(requests).toBe(2);
@@ -122,7 +143,10 @@ describe("TasksApi", () => {
 });
 
 function makeApi(
-  fetch: (input: string | URL | Request, init?: RequestInit) => Promise<Response>,
+  fetch: (
+    input: string | URL | Request,
+    init?: RequestInit,
+  ) => Promise<Response>,
 ): TasksApi {
   const auth = new AuthController({
     tokenStore: new MemoryTokenStore({ accessToken: "access" }),
@@ -148,7 +172,12 @@ function taskDetails(status: string): object {
       turn_status: status,
       sibling_turn_ids: ["turn-2"],
       attempt_placement: 0,
-      output_items: [{ type: "message", content: [{ content_type: "text", text: "232 words" }] }],
+      output_items: [
+        {
+          type: "message",
+          content: [{ content_type: "text", text: "232 words" }],
+        },
+      ],
     },
     current_diff_task_turn: {
       output_items: [{ type: "output_diff", diff: "diff --git a/a b/a" }],
@@ -178,10 +207,15 @@ test("waitFor aborts a stalled task request at the deadline", async () => {
 test("waitFor deadline does not wait for a stalled OAuth refresh", async () => {
   const token = `header.${Buffer.from(JSON.stringify({ exp: 1 })).toString("base64url")}.sig`;
   const auth = new AuthController({
-    tokenStore: new MemoryTokenStore({ accessToken: token, refreshToken: "refresh" }),
+    tokenStore: new MemoryTokenStore({
+      accessToken: token,
+      refreshToken: "refresh",
+    }),
     fetch: async () => new Promise<Response>(() => {}),
   });
-  const api = new TasksApi(new HttpClient({ auth, fetch: async () => Response.json({}) }));
+  const api = new TasksApi(
+    new HttpClient({ auth, fetch: async () => Response.json({}) }),
+  );
   await expect(api.waitFor("task", { timeoutMs: 10 })).rejects.toThrow();
 });
 
@@ -189,7 +223,9 @@ test("waitFor deadline bounds transports that cannot cancel their underlying RPC
   // Regression: AbortSignal.timeout does not fire while such a request is
   // outstanding, so waitFor must drive its deadline from an explicit timer.
   const api = makeApi(async () => new Promise<Response>(() => {}));
-  await expect(api.waitFor("task", { timeoutMs: 10 })).rejects.toThrow(/Timed out/);
+  await expect(api.waitFor("task", { timeoutMs: 10 })).rejects.toThrow(
+    /Timed out/,
+  );
 });
 
 test("waitFor deadline bounds a stalled response body", async () => {
