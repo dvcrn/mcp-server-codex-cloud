@@ -136,6 +136,21 @@ describe("EnvironmentsApi", () => {
     );
   });
 
+  test("gets environment details including secret names", async () => {
+    let url = "";
+    const api = makeApi(async (input) => {
+      url = String(input);
+      return Response.json(environmentWire());
+    });
+
+    const environment = await api.get("env/with slash");
+
+    expect(url).toEndWith(
+      "/wham/environments/env%2Fwith%20slash/with-creator-and-machine",
+    );
+    expect(environment.secretNames).toEqual(["FOO_SECRET"]);
+  });
+
   test("tests an environment and aggregates SSE logs", async () => {
     const requests: { url: string; accept: string; body: unknown }[] = [];
     const api = makeApi(async (input, init) => {
@@ -150,7 +165,7 @@ describe("EnvironmentsApi", () => {
           { headers: { "content-type": "text/event-stream" } },
         );
       }
-      return Response.json([environmentWire()]);
+      return Response.json(environmentWire());
     });
 
     expect(await api.test("env-1")).toEqual({
@@ -199,7 +214,7 @@ describe("EnvironmentsApi", () => {
           'data: {"type":"server_error","key":"system","line":"An unexpected error occurred"}\n\n',
         );
       }
-      return Response.json([environmentWire()]);
+      return Response.json(environmentWire());
     });
 
     expect(await api.test("env-1")).toMatchObject({

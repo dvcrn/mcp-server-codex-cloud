@@ -124,7 +124,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "get_environment",
-    "Get an environment including setup and maintenance scripts.",
+    "Get an environment including setup and maintenance scripts, environment variables, and configured secret names.",
     { id },
     true,
     (a, signal) => client.environments.get(a.id, { signal }),

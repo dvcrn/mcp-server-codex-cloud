@@ -240,14 +240,12 @@ test("MCP runs environment tests and returns aggregated logs", async () => {
           'data: {"type":"log","key":"system","line":"Setup complete"}\n\n',
         );
       }
-      return Response.json([
-        {
-          id: "env-1",
-          label: "Test",
-          machine_id: "machine",
-          repos: ["github-1"],
-        },
-      ]);
+      return Response.json({
+        id: "env-1",
+        label: "Test",
+        machine_id: "machine",
+        repos: ["github-1"],
+      });
     },
   });
   const server = createMcpServer(sdk);

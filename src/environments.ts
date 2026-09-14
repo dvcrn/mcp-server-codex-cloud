@@ -144,13 +144,11 @@ export class EnvironmentsApi {
     id: string,
     options: { signal?: AbortSignal } = {},
   ): Promise<CloudEnvironment> {
-    const environment = (await this.list(options)).find(
-      (candidate) => candidate.id === id,
+    const environment = await this.http.request<EnvironmentWire>(
+      `/environments/${segment(id)}/with-creator-and-machine`,
+      { signal: options.signal },
     );
-    if (!environment) {
-      throw new CodexCloudError(`Environment ${id} was not found`);
-    }
-    return environment;
+    return mapEnvironment(environment);
   }
 
   public async create(

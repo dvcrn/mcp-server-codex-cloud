@@ -235,6 +235,7 @@ uses the `/backend-api/wham/...` form.
 | `GET` | `/wham/environments` | `/api/codex/environments` | List environments |
 | `POST` | `/wham/environments` | Presumed `/api/codex/environments`; not tested | Create an environment |
 | `PATCH` | `/wham/environments/{environment_id}` | Presumed `/api/codex/environments/{environment_id}`; not tested | Partially update environment settings |
+| `GET` | `/wham/environments/{environment_id}/with-creator-and-machine` | Presumed `/api/codex/environments/{environment_id}/with-creator-and-machine`; not tested | Retrieve complete environment settings and display metadata |
 | `GET` | `/wham/environments/by-repo/{vcs}/{owner}/{repo}` | `/api/codex/environments/by-repo/{vcs}/{owner}/{repo}` | Find environments associated with a repository |
 | `GET` | `/wham/tasks/list` | `/api/codex/tasks/list` | List tasks |
 | `POST` | `/wham/tasks` | `/api/codex/tasks` | Create a task |
@@ -574,11 +575,12 @@ not echo the value; it returned:
 
 The update returned `200 OK`. A subsequent environment-list request confirmed
 the environment variable, multiline setup script, and network policy, but its
-`secrets` map was empty. A later no-op `PATCH {}` returned
-`FOO_SECRET: "<REDACTED>"` again, indicating that item-update responses expose
-stored secret names while list responses omit them. The clear-text value was
-never returned. Whether `env_vars` and `secrets` are merged or wholly replaced
-when the existing maps contain other keys remains untested.
+`secrets` map was empty. Both a later no-op `PATCH {}` and the environment
+detail endpoint returned `FOO_SECRET: "<REDACTED>"`, indicating that item
+responses expose stored secret names while list responses omit them. The
+clear-text value was never returned. Whether `env_vars` and `secrets` are
+merged or wholly replaced when the existing maps contain other keys remains
+untested.
 
 ### List environments
 
@@ -623,10 +625,21 @@ entire response as sensitive and avoid logging raw environment objects.
 
 ### Retrieve environment settings
 
-There is no observed read-one endpoint. A live
-`GET /backend-api/wham/environments/{environment_id}` returned
-`405 Method Not Allowed`. To retrieve settings, request the global or
-repository-specific environment list and select the object by `id`.
+The Codex environment settings UI retrieves one environment with:
+
+```http
+GET /backend-api/wham/environments/{environment_id}/with-creator-and-machine
+```
+
+A live request returned `200 OK` with the complete environment settings plus
+`creator` and `machine` display metadata. Unlike the global and
+repository-specific list endpoints, its `secrets` map contains configured
+secret names with `"<REDACTED>"` values. Clear-text secret values are not
+returned. The SDK uses this endpoint for `get_environment` and as the source of
+configuration passed to `test_environment`.
+
+A direct `GET /backend-api/wham/environments/{environment_id}` still returns
+`405 Method Not Allowed`.
 
 The minimally created test environment returned these default settings:
 
