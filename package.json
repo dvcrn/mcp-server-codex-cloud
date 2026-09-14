@@ -10,7 +10,7 @@
     "wrangler": "^4.129.0"
   },
   "type": "module",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "MCP server for Codex Cloud environments and tasks",
   "author": "David Mohl",
   "repository": {
