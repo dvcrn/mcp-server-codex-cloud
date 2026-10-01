@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Fetch } from "../src/auth.js";
 import { CodexCloudClient } from "../src/client.js";
 import { createMcpServer } from "../src/mcp.js";
+import { workerSocketFactory } from "./socket.js";
 import { KvTokenStore } from "./token-store.js";
 
 export interface Env {
@@ -33,6 +34,7 @@ class CodexAccount {
       tokenStore: this.#store,
       userAgent: "codex-cli",
       fetch: upstreamFetch(this.#egress),
+      socketFactory: workerSocketFactory(this.#egress),
     });
     const handler = createMcpHandler(() => createMcpServer(client), {
       responseMode: "auto",
@@ -46,6 +48,7 @@ class CodexAccount {
         headers: response.headers,
       });
     } finally {
+      client.close();
       await handler.close();
     }
   }
@@ -74,7 +77,11 @@ const upstreamFetch =
     const url = new URL(request.url);
     if (
       url.protocol !== "https:"
-      || !["chatgpt.com", "auth.openai.com"].includes(url.hostname)
+      || ![
+        "codex-cloud-backend.chatgpt.com",
+        "codex-cloud-environments.chatgpt.com",
+        "auth.openai.com",
+      ].includes(url.hostname)
     ) {
       throw new Error("Unsupported upstream");
     }

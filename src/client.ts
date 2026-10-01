@@ -2,6 +2,7 @@ import { AuthController, type Fetch } from "./auth.js";
 import { EnvironmentsApi, githubRepositoryId } from "./environments.js";
 import { CodexCloudError } from "./errors.js";
 import { HttpClient } from "./http.js";
+import { RpcClient, type SocketFactory } from "./rpc.js";
 import { TasksApi } from "./tasks.js";
 import {
   CodexAuthFileTokenStore,
@@ -19,6 +20,8 @@ export interface CodexCloudClientOptions {
   refreshUrl?: string;
   oauthClientId?: string;
   refreshWindowMs?: number;
+  socketFactory?: SocketFactory;
+  rpcTimeoutMs?: number;
 }
 
 export interface CodexHomeClientOptions
@@ -30,6 +33,7 @@ export class CodexCloudClient {
   public readonly environments: EnvironmentsApi;
   public readonly tasks: TasksApi;
   readonly #auth: AuthController;
+  readonly #rpc: RpcClient;
 
   public constructor(options: CodexCloudClientOptions) {
     if (options.tokens !== undefined && options.tokenStore !== undefined) {
@@ -67,9 +71,25 @@ export class CodexCloudClient {
         : { userAgent: options.userAgent }),
     });
     this.environments = new EnvironmentsApi(http);
-    this.tasks = new TasksApi(http);
+    const socketUrl = new URL(http.baseUrl);
+    socketUrl.protocol = "wss:";
+    this.#rpc = new RpcClient({
+      auth: this.#auth,
+      url: socketUrl.toString(),
+      socketFactory:
+        options.socketFactory
+        ?? (async (...args) => {
+          const { nodeSocketFactory } = await import("./socket-node.js");
+          return nodeSocketFactory(...args);
+        }),
+      ...(options.rpcTimeoutMs === undefined
+        ? {}
+        : { timeoutMs: options.rpcTimeoutMs }),
+    });
+    this.tasks = new TasksApi(http, this.#rpc);
   }
 
+  /** Loads credentials from the selected Codex auth file. */
   public static async fromCodexHome(
     options: CodexHomeClientOptions = {},
   ): Promise<CodexCloudClient> {
@@ -81,20 +101,24 @@ export class CodexCloudClient {
     return new CodexCloudClient({ ...clientOptions, tokenStore });
   }
 
+  /** Formats a GitHub numeric repository ID for cloud configuration. */
   public static githubRepositoryId(id: number | string): `github-${string}` {
     return githubRepositoryId(id);
   }
 
+  /** Refreshes OAuth credentials and persists rotated tokens. */
   public async refreshTokens(): Promise<CodexTokens> {
     return this.#auth.refresh();
+  }
+  /** Releases the cloud socket and rejects pending requests. */
+  public close(): void {
+    this.#rpc.close();
   }
 }
 
 function defaultFetch(): Fetch {
-  if (typeof globalThis.fetch !== "function") {
-    throw new CodexCloudError(
-      "This SDK requires a runtime with global fetch support",
-    );
-  }
-  return globalThis.fetch.bind(globalThis) as Fetch;
+  return async (input, init) => {
+    const { nodeFetch } = await import("./fetch-node.js");
+    return nodeFetch(input, init);
+  };
 }

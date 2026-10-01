@@ -1,482 +1,414 @@
+import { setTimeout as delay } from "node:timers/promises";
+import type { PageOptions, RequestOptions } from "./cloud-types.js";
 import { CodexCloudError } from "./errors.js";
 import type { HttpClient } from "./http.js";
 import { segment } from "./internal.js";
 
-export interface AgentNetworkAccess {
-  mode: string;
-  presetAllowlist: string | null;
-  allowlistDomains: string | null;
-  allowlistRules: unknown;
-  denylistDomains: string | null;
-  safeMethodsOnly: boolean | null;
+export type RepositoryId = `github-${string}`;
+
+export interface EnvironmentRepository {
+  repository_id: RepositoryId;
+  ref: string;
+  mount_path?: string;
 }
 
-export interface EnvironmentCacheSettings {
-  postSetupCacheEnabled: boolean;
-  cacheInvalidationKey: string;
+export type NetworkPolicy =
+  | { type: "unrestricted" }
+  | { type: "restricted"; presets: string[]; egress_rules: unknown[] };
+
+export type PersonalSecretNamespace = "not_sensitive" | "sensitive";
+
+export type PersonalSecretTarget =
+  | { type: "all_environment_configs" }
+  | { type: "environment_config_ids"; ids: string[] };
+
+export interface PersonalSecretMetadata {
+  id: string;
+  name: string;
+  env_var: string;
+  target: PersonalSecretTarget;
 }
 
-const defaultEnvironmentVariables: Record<string, string> = {
-  CODEX_ENV_PYTHON_VERSION: "3.12",
-  CODEX_ENV_NODE_VERSION: "20",
-  CODEX_ENV_RUBY_VERSION: "3.4.4",
-  CODEX_ENV_RUST_VERSION: "1.89.0",
-  CODEX_ENV_GO_VERSION: "1.24.3",
-  CODEX_ENV_BUN_VERSION: "1.2.14",
-  CODEX_ENV_PHP_VERSION: "8.4",
-  CODEX_ENV_JAVA_VERSION: "21",
-  CODEX_ENV_SWIFT_VERSION: "6.1",
-};
+export type PersonalSecretInput = Omit<PersonalSecretMetadata, "id"> &
+  ({ id?: never; value: string } | { id: string; value?: string });
 
-export interface EnvironmentPermissions {
-  canWrite: boolean;
-  canDelete: boolean;
+export interface EnvironmentValueInput {
+  namespace: "runtime" | "proxy";
+  name: string;
+  value: string;
+}
+
+export interface VaultValueReference {
+  id: string;
+  name: string;
+}
+
+export interface RuntimeRequirement {
+  source: { type: "user_provided" } | { type: "vault_secret"; id: string };
+  optional: boolean;
+  delivery: { type: "direct_environment_variable"; variable_name: string };
+}
+
+export type EnvironmentSecret = {
+  name: string;
+  target: { environment_variable: string; allowed_domains: string[] };
+} & (
+  | { source: "environment"; id: string; optional?: boolean }
+  | { source: "user_provided"; optional: boolean }
+);
+
+export interface EnvironmentDraft {
+  id: string;
+  base_version_id: string;
+  revision: number;
+  repositories: EnvironmentRepository[];
+  install_script?: string;
+  start_skill?: string;
+  network_policy: NetworkPolicy;
+  secrets?: EnvironmentSecret[];
+  runtime_requirements?: RuntimeRequirement[];
+  [key: string]: unknown;
 }
 
 export interface CloudEnvironment {
   id: string;
-  label: string;
-  machineId: string;
-  repositoryIds: string[];
-  repositories: Record<string, unknown>;
-  githubConnectorId: string | null;
-  setupScripts: string[];
-  maintenanceScripts: string[];
-  environmentVariables: Record<string, string>;
-  secretNames: string[];
-  secretsWithDomains: unknown[];
-  networkAccess: AgentNetworkAccess | null;
-  autoSetupEnabled: boolean | null;
-  cache: EnvironmentCacheSettings | null;
-  permissions: EnvironmentPermissions | null;
-  workspaceDirectory: string | null;
-  description: string | null;
-  isPinned: boolean;
-  taskCount: number;
-  etag: string | null;
-  createdAt: Date | null;
-  dockerInDockerEnabled: boolean;
-  authTranslatorEnabled: boolean;
-  shareSettings: string | null;
-  shareTargets: unknown[];
-  warnings?: string[];
+  name: string;
+  repositories: EnvironmentRepository[];
+  version_id: string;
+  version_revision: number;
+  latest_ready_version_id?: string;
+  status?: string;
+  install_script?: string;
+  start_skill?: string;
+  network_policy?: NetworkPolicy;
+  secrets?: EnvironmentSecret[];
+  runtime_requirements?: RuntimeRequirement[];
+  environment_id?: string;
+  thread_id?: string;
+  draft?: EnvironmentDraft;
+  [key: string]: unknown;
 }
 
-export type RepositoryId = `github-${string}`;
+export interface EnvironmentPage {
+  data: CloudEnvironment[];
+  next_cursor?: string | null;
+}
 
 export interface CreateEnvironmentInput {
-  label: string;
-  repositories: readonly RepositoryId[];
-  machineId?: string;
+  name: string;
+  repositories: EnvironmentRepository[];
+  network_policy?: NetworkPolicy;
+  share_settings?: "private" | "workspace";
+  /** Whether config creation requests backend onboarding. @default false */
+  start_onboarding?: boolean;
 }
 
-export interface UpdateEnvironmentInput {
-  label?: string;
-  repositories?: readonly RepositoryId[];
-  machineId?: string;
-  description?: string | null;
-  workspaceDirectory?: string | null;
-  setupScript?: string;
-  maintenanceScript?: string;
-  environmentVariables?: Record<string, string>;
-  secrets?: Record<string, string>;
-  networkAccess?: AgentNetworkAccessInput | "unrestricted" | null;
-  autoSetupEnabled?: boolean;
-  cache?: EnvironmentCacheSettingsInput;
-  dockerInDockerEnabled?: boolean;
+export interface UpdateDraftInput {
+  base_version_id: string;
+  expected_revision: number;
+  repositories?: EnvironmentRepository[];
+  install_script?: string;
+  start_skill?: string;
+  network_policy?: NetworkPolicy;
+  portals?: { ssh: boolean };
+  secrets?: EnvironmentSecret[];
+  runtime_requirements?: RuntimeRequirement[];
+  outbound_identity_requirements?: unknown[];
 }
 
-export interface AgentNetworkAccessInput {
-  mode: string;
-  presetAllowlist?: string | null;
-  allowlistDomains?: string | null;
-  allowlistRules?: unknown;
-  denylistDomains?: string | null;
-  safeMethodsOnly?: boolean | null;
+export interface EditingRuntime {
+  draft_id: string;
+  environment_id: string;
+  thread_id: string;
 }
 
-export interface EnvironmentCacheSettingsInput {
-  postSetupCacheEnabled: boolean;
-  cacheInvalidationKey?: string;
-}
-
-export interface EnvironmentTestLog {
-  type: string;
-  key: string;
-  line: string;
-}
-
-export interface EnvironmentTestResult {
-  success: boolean;
-  logs: EnvironmentTestLog[];
+export interface EnvironmentOperation {
+  id: string;
+  kind: string;
+  state: string;
+  environment_id?: string;
+  error?: unknown;
+  [key: string]: unknown;
 }
 
 export class EnvironmentsApi {
   public constructor(private readonly http: HttpClient) {}
 
-  public async list(
-    options: { signal?: AbortSignal } = {},
-  ): Promise<CloudEnvironment[]> {
-    const environments = await this.http.request<EnvironmentWire[]>(
-      "/environments",
-      {
-        signal: options.signal,
+  /** Lists persistent environment configs using the backend pagination envelope. */
+  public list(
+    options: PageOptions & {
+      scope?: "user" | "workspace";
+      omitDraft?: boolean;
+    } = {},
+  ): Promise<EnvironmentPage> {
+    return this.http.request("/v1/environment-configs", {
+      query: {
+        scope: options.scope ?? "user",
+        limit: options.limit ?? 100,
+        cursor: options.cursor,
+        omitDraft: options.omitDraft ?? true,
       },
-    );
-    return environments.map(mapEnvironment);
-  }
-
-  public async listByRepository(
-    owner: string,
-    repository: string,
-    options: { provider?: string; signal?: AbortSignal } = {},
-  ): Promise<CloudEnvironment[]> {
-    const provider = options.provider ?? "github";
-    const path =
-      `/environments/by-repo/${segment(provider)}/${segment(owner)}/${segment(repository)}` as const;
-    const environments = await this.http.request<EnvironmentWire[]>(path, {
       signal: options.signal,
     });
-    return environments.map(mapEnvironment);
   }
 
-  public async get(
+  /** Reads a config's published version and any returned draft metadata. */
+  public get(
     id: string,
-    options: { signal?: AbortSignal } = {},
+    options: RequestOptions = {},
   ): Promise<CloudEnvironment> {
-    const environment = await this.http.request<EnvironmentWire>(
-      `/environments/${segment(id)}/with-creator-and-machine`,
-      { signal: options.signal },
-    );
-    return mapEnvironment(environment);
+    return this.http.request(`/v1/environment-configs/${segment(id)}`, options);
   }
 
-  public async create(
+  /** Creates a persistent config with repository refs and network policy. */
+  public create(
     input: CreateEnvironmentInput,
-    options: { signal?: AbortSignal } = {},
+    options: RequestOptions = {},
   ): Promise<CloudEnvironment> {
-    if (!input.label.trim()) {
-      throw new CodexCloudError("Environment label must not be empty");
+    if (!input.name.trim()) {
+      throw new CodexCloudError("Environment name must not be empty");
     }
-    if (input.repositories.length === 0) {
-      throw new CodexCloudError("At least one repository is required");
+    for (const repository of input.repositories) {
+      githubRepositoryId(repository.repository_id);
+      if (!repository.ref.trim()) {
+        throw new CodexCloudError("Repository ref must not be empty");
+      }
     }
-    const environment = await this.http.request<EnvironmentWire>(
-      "/environments",
+    return this.http.request("/v1/environment-configs", {
+      method: "POST",
+      body: {
+        ...input,
+        network_policy: input.network_policy ?? {
+          type: "restricted",
+          presets: ["package_managers"],
+          egress_rules: [],
+        },
+        share_settings: input.share_settings ?? "private",
+        start_onboarding: input.start_onboarding ?? false,
+      },
+      signal: options.signal,
+    });
+  }
+
+  /** Renames the config without changing its published scripts. */
+  public rename(
+    id: string,
+    name: string,
+    options: RequestOptions = {},
+  ): Promise<CloudEnvironment> {
+    if (!name.trim()) {
+      throw new CodexCloudError("Environment name must not be empty");
+    }
+    return this.http.request(`/v1/environment-configs/${segment(id)}`, {
+      method: "PATCH",
+      body: { name },
+      signal: options.signal,
+    });
+  }
+
+  /** Opens an editing draft and returns its runtime and conversation IDs. */
+  public openDraft(
+    id: string,
+    options: RequestOptions = {},
+  ): Promise<EditingRuntime> {
+    return this.http.request(`/v1/environment-configs/${segment(id)}/drafts`, {
+      method: "POST",
+      signal: options.signal,
+    });
+  }
+
+  /** Reads an explicit draft together with the published config. */
+  public getDraft(
+    id: string,
+    draftId: string,
+    options: RequestOptions = {},
+  ): Promise<CloudEnvironment> {
+    return this.http.request(
+      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}`,
+      options,
+    );
+  }
+
+  /** Saves draft changes guarded by the base version and expected revision. */
+  public updateDraft(
+    id: string,
+    draftId: string,
+    input: UpdateDraftInput,
+    options: RequestOptions = {},
+  ): Promise<CloudEnvironment> {
+    return this.http.request(
+      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}`,
+      { method: "PATCH", body: input, signal: options.signal },
+    );
+  }
+
+  /** Begins asynchronous publication with a caller-reusable idempotency key. */
+  public beginPublish(
+    id: string,
+    draftId: string,
+    expectedRevision: number,
+    idempotencyKey: string,
+    options: RequestOptions = {},
+  ): Promise<EnvironmentOperation> {
+    return this.http.request(
+      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}/approve/begin`,
       {
         method: "POST",
         body: {
-          label: input.label,
-          repos: input.repositories.map(repositoryId),
-          machine_id: input.machineId ?? "wham-public/wham-universal",
-          description: "",
-          workspace_dir: "/workspace",
-          setup: [""],
-          maintenance_setup: [""],
-          env_vars: defaultEnvironmentVariables,
-          auto_setup_settings: { use_auto_setup: true },
+          expected_revision: expectedRevision,
+          idempotency_key: idempotencyKey,
         },
         signal: options.signal,
       },
     );
-    return mapEnvironment(environment);
   }
 
-  public async update(
-    id: string,
-    input: UpdateEnvironmentInput,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<CloudEnvironment> {
-    const environment = await this.http.request<EnvironmentWire>(
-      `/environments/${segment(id)}`,
-      {
-        method: "PATCH",
-        body: environmentInput(input),
-        signal: options.signal,
-      },
+  /** Reads the state of a publication operation. */
+  public getOperation(
+    operationId: string,
+    options: RequestOptions = {},
+  ): Promise<EnvironmentOperation> {
+    return this.http.request(
+      `/v1/environment-operations/${segment(operationId)}`,
+      options,
     );
-    const result = mapEnvironment(environment);
-    if (
-      result.autoSetupEnabled === true
-      && (input.setupScript !== undefined
-        || input.maintenanceScript !== undefined)
-    ) {
-      result.warnings = [
-        "Custom setup and maintenance scripts are ignored because autoSetupEnabled is true. Set it to false for these scripts to run.",
-      ];
+  }
+
+  /** Waits for operation success and rejects failed or unknown terminal states. */
+  public async waitForOperation(
+    operationId: string,
+    options: RequestOptions & { timeoutMs?: number; intervalMs?: number } = {},
+  ): Promise<EnvironmentOperation> {
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(options.timeoutMs ?? 45_000),
+      ...(options.signal ? [options.signal] : []),
+    ]);
+    for (;;) {
+      const operation = await this.getOperation(operationId, { signal });
+      if (operation.state === "SUCCEEDED") {
+        return operation;
+      }
+      if (!["PENDING", "RUNNING"].includes(operation.state)) {
+        throw new CodexCloudError(
+          `Environment operation ${operationId} ended in state ${operation.state}`,
+        );
+      }
+      await delay(options.intervalMs ?? 2_000, undefined, { signal });
     }
-    return result;
   }
 
-  /** Runs the current environment configuration and collects its setup logs. */
-  public async test(
+  /** Completes an approved operation using the draft's editing thread. */
+  public completePublish(
     id: string,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<EnvironmentTestResult> {
-    const environment = await this.get(id, options);
-    const stream = await this.http.requestEventStream("/environments/test", {
-      method: "POST",
-      body: {
-        machine_id: environment.machineId,
-        repos: environment.repositoryIds,
-        github_connector_id: environment.githubConnectorId,
-        setup: environment.setupScripts,
-        maintenance_setup: environment.maintenanceScripts,
-        workspace_dir: environment.workspaceDirectory ?? "/workspace",
-        env_vars: environment.environmentVariables,
-        secrets_with_domains: environment.secretsWithDomains,
-        environment_id: environment.id,
-        agent_network_access: environment.networkAccess
-          ? mapNetworkInput(environment.networkAccess)
-          : null,
-        auto_setup_settings: {
-          use_auto_setup: environment.autoSetupEnabled ?? true,
-        },
+    draftId: string,
+    operationId: string,
+    threadId: string,
+    options: RequestOptions = {},
+  ): Promise<CloudEnvironment> {
+    return this.http.request(
+      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}/approve/complete`,
+      {
+        method: "POST",
+        body: { operation_id: operationId, thread_id: threadId },
+        signal: options.signal,
       },
+    );
+  }
+
+  /** Publishes a draft through begin, poll, and complete, preserving caller retry identity. */
+  public async publish(
+    id: string,
+    draftId: string,
+    input: {
+      expectedRevision: number;
+      idempotencyKey: string;
+      threadId: string;
+    },
+    options: RequestOptions & { timeoutMs?: number } = {},
+  ): Promise<CloudEnvironment> {
+    const operation = await this.beginPublish(
+      id,
+      draftId,
+      input.expectedRevision,
+      input.idempotencyKey,
+      options,
+    );
+    try {
+      await this.waitForOperation(operation.id, options);
+      await this.completePublish(
+        id,
+        draftId,
+        operation.id,
+        input.threadId,
+        options,
+      );
+      return await this.get(id, options);
+    } catch (error) {
+      throw new CodexCloudError(
+        `Publication operation ${operation.id} did not finish locally. Inspect this operation before retrying publication.`,
+        { cause: error },
+      );
+    }
+  }
+
+  /** Reads VPN capabilities or connection metadata for a config or draft. */
+  public getVpn(
+    id: string,
+    options: RequestOptions & { draftId?: string } = {},
+  ): Promise<Record<string, unknown>> {
+    return this.http.request(`/v1/environment-configs/${segment(id)}/vpn`, {
+      query: { draft_id: options.draftId },
       signal: options.signal,
     });
-    const logs = parseTestLogs(stream);
-    return {
-      success: !logs.some((log) => isTestError(log.type)),
-      logs,
-    };
   }
-}
 
-export function githubRepositoryId(id: number | string): `github-${string}` {
-  const value = String(id).trim();
-  if (!/^\d+$/.test(value)) {
-    throw new CodexCloudError("GitHub repository ID must be numeric");
-  }
-  return `github-${value}`;
-}
-
-export function unrestrictedNetworkAccess(): AgentNetworkAccessInput {
-  return {
-    mode: "on",
-    presetAllowlist: "all",
-    allowlistDomains: "",
-    allowlistRules: null,
-    denylistDomains: null,
-    safeMethodsOnly: null,
-  };
-}
-
-interface EnvironmentWire {
-  id: string;
-  label: string;
-  machine_id: string;
-  repos?: string[];
-  repo_map?: Record<string, unknown>;
-  github_connector_id?: string | null;
-  setup?: string[] | string;
-  maintenance_setup?: string[] | string;
-  env_vars?: Record<string, string>;
-  secrets?: Record<string, string>;
-  secrets_with_domains?: unknown[];
-  agent_network_access?: NetworkWire | null;
-  auto_setup_settings?: { use_auto_setup?: boolean } | null;
-  cache_settings?: {
-    post_setup_cache_enabled?: boolean;
-    cache_invalidation_key?: string;
-  } | null;
-  permissions?: { can_write?: boolean; can_delete?: boolean } | null;
-  workspace_dir?: string | null;
-  description?: string | null;
-  is_pinned?: boolean;
-  task_count?: number;
-  etag?: string | null;
-  created_at?: number | null;
-  enable_docker_in_docker?: boolean;
-  enable_authtranslator?: boolean;
-  share_settings?: string | null;
-  share_targets?: unknown[];
-}
-
-interface NetworkWire {
-  mode?: string;
-  preset_allowlist?: string | null;
-  allowlist_domains?: string | null;
-  allowlist_rules?: unknown;
-  denylist_domains?: string | null;
-  safe_methods_only?: boolean | null;
-}
-
-function environmentInput(
-  input: UpdateEnvironmentInput,
-): Record<string, unknown> {
-  const body: Record<string, unknown> = {};
-  if (input.label !== undefined) {
-    body.label = input.label;
-  }
-  if (input.repositories !== undefined) {
-    body.repos = input.repositories.map(repositoryId);
-  }
-  if (input.machineId !== undefined) {
-    body.machine_id = input.machineId;
-  }
-  if (input.description !== undefined) {
-    body.description = input.description;
-  }
-  if (input.workspaceDirectory !== undefined) {
-    body.workspace_dir = input.workspaceDirectory;
-  }
-  if (input.setupScript !== undefined) {
-    body.setup = input.setupScript;
-  }
-  if (input.maintenanceScript !== undefined) {
-    body.maintenance_setup = input.maintenanceScript;
-  }
-  if (input.environmentVariables !== undefined) {
-    body.env_vars = input.environmentVariables;
-  }
-  if (input.secrets !== undefined) {
-    body.secrets = input.secrets;
-  }
-  if (input.networkAccess !== undefined) {
-    body.agent_network_access = mapNetworkInput(input.networkAccess);
-  }
-  if (input.autoSetupEnabled !== undefined) {
-    body.auto_setup_settings = { use_auto_setup: input.autoSetupEnabled };
-  }
-  if (input.cache !== undefined) {
-    body.cache_settings = {
-      post_setup_cache_enabled: input.cache.postSetupCacheEnabled,
-      cache_invalidation_key: input.cache.cacheInvalidationKey ?? "",
-    };
-  }
-  if (input.dockerInDockerEnabled !== undefined) {
-    body.enable_docker_in_docker = input.dockerInDockerEnabled;
-  }
-  return body;
-}
-
-function repositoryId(id: RepositoryId): string {
-  if (typeof id !== "string" || !/^github-\d+$/.test(id)) {
-    throw new CodexCloudError(
-      "Repository ID must use the github-NUMERIC_ID format",
-    );
-  }
-  return id;
-}
-
-function mapNetworkInput(
-  input: AgentNetworkAccessInput | "unrestricted" | null,
-): unknown {
-  if (input === null) {
-    return null;
-  }
-  const value = input === "unrestricted" ? unrestrictedNetworkAccess() : input;
-  return {
-    mode: value.mode,
-    preset_allowlist: value.presetAllowlist ?? null,
-    allowlist_domains: value.allowlistDomains ?? null,
-    allowlist_rules: value.allowlistRules ?? null,
-    denylist_domains: value.denylistDomains ?? null,
-    safe_methods_only: value.safeMethodsOnly ?? null,
-  };
-}
-
-function mapEnvironment(wire: EnvironmentWire): CloudEnvironment {
-  const network = wire.agent_network_access;
-  const cache = wire.cache_settings;
-  const permissions = wire.permissions;
-  return {
-    id: wire.id,
-    label: wire.label,
-    machineId: wire.machine_id,
-    repositoryIds: wire.repos ?? [],
-    repositories: wire.repo_map ?? {},
-    githubConnectorId: wire.github_connector_id ?? null,
-    setupScripts: scripts(wire.setup),
-    maintenanceScripts: scripts(wire.maintenance_setup),
-    environmentVariables: wire.env_vars ?? {},
-    secretNames: Object.keys(wire.secrets ?? {}),
-    secretsWithDomains: wire.secrets_with_domains ?? [],
-    networkAccess: network
-      ? {
-          mode: network.mode ?? "unknown",
-          presetAllowlist: network.preset_allowlist ?? null,
-          allowlistDomains: network.allowlist_domains ?? null,
-          allowlistRules: network.allowlist_rules ?? null,
-          denylistDomains: network.denylist_domains ?? null,
-          safeMethodsOnly: network.safe_methods_only ?? null,
-        }
-      : null,
-    autoSetupEnabled: wire.auto_setup_settings?.use_auto_setup ?? null,
-    cache: cache
-      ? {
-          postSetupCacheEnabled: cache.post_setup_cache_enabled ?? false,
-          cacheInvalidationKey: cache.cache_invalidation_key ?? "",
-        }
-      : null,
-    permissions: permissions
-      ? {
-          canWrite: permissions.can_write ?? false,
-          canDelete: permissions.can_delete ?? false,
-        }
-      : null,
-    workspaceDirectory: wire.workspace_dir ?? null,
-    description: wire.description ?? null,
-    isPinned: wire.is_pinned ?? false,
-    taskCount: wire.task_count ?? 0,
-    etag: wire.etag ?? null,
-    createdAt:
-      wire.created_at === undefined || wire.created_at === null
-        ? null
-        : new Date(wire.created_at * 1000),
-    dockerInDockerEnabled: wire.enable_docker_in_docker ?? false,
-    authTranslatorEnabled: wire.enable_authtranslator ?? false,
-    shareSettings: wire.share_settings ?? null,
-    shareTargets: wire.share_targets ?? [],
-  };
-}
-
-function scripts(value: string[] | string | undefined): string[] {
-  if (value === undefined) {
-    return [];
-  }
-  return Array.isArray(value) ? value : [value];
-}
-
-function parseTestLogs(stream: string): EnvironmentTestLog[] {
-  const logs: EnvironmentTestLog[] = [];
-  for (const event of stream.split(/\r?\n\r?\n/)) {
-    const data = event
-      .split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n");
-    if (!data || data === "[DONE]") {
-      continue;
-    }
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(data);
-    } catch {
-      throw new CodexCloudError("Environment test returned invalid SSE data");
-    }
-    if (!isRecord(parsed)) {
-      throw new CodexCloudError("Environment test returned invalid SSE data");
-    }
-    logs.push({
-      type: typeof parsed.type === "string" ? parsed.type : "log",
-      key: typeof parsed.key === "string" ? parsed.key : "system",
-      line:
-        typeof parsed.line === "string"
-          ? parsed.line
-          : typeof parsed.message === "string"
-            ? parsed.message
-            : data,
+  /** Lists secret metadata in the chosen namespace without requesting values. */
+  public listSecrets(
+    namespace: PersonalSecretNamespace,
+    options: PageOptions = {},
+  ): Promise<{
+    secrets: PersonalSecretMetadata[];
+    next_cursor?: string | null;
+  }> {
+    return this.http.request("/v1/personal-secrets", {
+      query: { namespace, cursor: options.cursor },
+      signal: options.signal,
     });
   }
-  return logs;
+
+  /** Creates or updates personal vault entries, preserving saved values when updates omit value. */
+  public async savePersonalSecrets(
+    namespace: PersonalSecretNamespace,
+    secrets: PersonalSecretInput[],
+    options: RequestOptions = {},
+  ): Promise<{ secrets: VaultValueReference[] }> {
+    const result = await this.http.request<{ secrets: VaultValueReference[] }>(
+      "/v1/personal-secrets",
+      { method: "POST", body: { namespace, secrets }, signal: options.signal },
+    );
+    return { secrets: result.secrets.map(({ id, name }) => ({ id, name })) };
+  }
+
+  /** Stores an immutable shared value whose ID must be attached to an environment draft. */
+  public async createValue(
+    input: EnvironmentValueInput,
+    options: RequestOptions = {},
+  ): Promise<VaultValueReference> {
+    const { id, name } = await this.http.request<VaultValueReference>(
+      "/v1/environment-values",
+      { method: "POST", body: input, signal: options.signal },
+    );
+    return { id, name };
+  }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function isTestError(type: string): boolean {
-  return type === "error" || type.endsWith("_error");
+/** Converts a numeric GitHub repository ID into the cloud repository identifier. */
+export function githubRepositoryId(id: number | string): RepositoryId {
+  const value = String(id).replace(/^github-/, "");
+  if (!/^\d+$/.test(value)) {
+    throw new CodexCloudError(
+      "Repository ID must be numeric or github-NUMERIC_ID",
+    );
+  }
+  return `github-${value}`;
 }

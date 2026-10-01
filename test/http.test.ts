@@ -14,7 +14,7 @@ describe("HttpClient", () => {
     });
     const controller = new AbortController();
     const request = client
-      .request("/tasks/list", { signal: controller.signal })
+      .request("/v1/threads", { signal: controller.signal })
       .catch(() => undefined);
     await started.promise;
     const response = Response.json({ items: [] });
@@ -33,7 +33,7 @@ describe("HttpClient", () => {
       return pending.promise;
     });
     const controller = new AbortController();
-    const request = client.request("/tasks/list", {
+    const request = client.request("/v1/threads", {
       signal: controller.signal,
     });
     await started.promise;
@@ -51,7 +51,7 @@ describe("HttpClient", () => {
     await canceled.promise;
   });
 
-  test("uses WHAM routes and ChatGPT auth headers", async () => {
+  test("uses exact versioned routes and ChatGPT auth headers", async () => {
     let capturedUrl: string | undefined;
     let capturedHeaders: Headers | undefined;
     const fetch = async (
@@ -64,12 +64,12 @@ describe("HttpClient", () => {
     };
     const client = makeClient(fetch);
 
-    await client.request("/tasks/list", {
+    await client.request("/v1/threads", {
       query: { limit: 20, task_filter: "current", absent: undefined },
     });
 
     expect(capturedUrl).toBe(
-      "https://chatgpt.com/backend-api/wham/tasks/list?limit=20&task_filter=current",
+      "https://codex-cloud-backend.chatgpt.com/v1/threads?limit=20&task_filter=current",
     );
     expect(capturedHeaders?.get("authorization")).toBe("Bearer access");
     expect(capturedHeaders?.get("chatgpt-account-id")).toBe("account");
@@ -178,10 +178,8 @@ describe("HttpClient", () => {
   });
 });
 
-test("normalizeBaseUrl adds backend-api for ChatGPT hosts", () => {
-  expect(normalizeBaseUrl("https://chatgpt.com/")).toBe(
-    "https://chatgpt.com/backend-api",
-  );
+test("normalizeBaseUrl preserves configured paths without adding legacy prefixes", () => {
+  expect(normalizeBaseUrl("https://chatgpt.com/")).toBe("https://chatgpt.com");
   expect(normalizeBaseUrl("https://example.test/")).toBe(
     "https://example.test",
   );

@@ -53,12 +53,12 @@ await client.connect(
 );
 try {
   const tools = await client.listTools();
-  assert.equal(tools.tools.length, 14);
-  for (const name of ["follow_up_task", "list_task_turns", "get_task_logs"]) {
+  assert(tools.tools.length >= 25);
+  for (const name of ["follow_up_task", "list_task_turns", "list_task_items"]) {
     assert(tools.tools.some((tool) => tool.name === name));
   }
   console.log(
-    "Worker auth, origin, input limits, MCP connection and 14 tools verified",
+    "Worker auth, origin, input limits, MCP connection and cloud tools verified",
   );
 } finally {
   await client.close();

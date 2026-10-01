@@ -1,283 +1,306 @@
-import { describe, expect, test } from "bun:test";
-import { AuthController } from "../src/auth.js";
-import {
-  EnvironmentsApi,
-  githubRepositoryId,
-  type RepositoryId,
-} from "../src/environments.js";
-import { HttpClient } from "../src/http.js";
-import { MemoryTokenStore } from "../src/token-store.js";
+import { expect, test } from "bun:test";
+import { CodexCloudClient } from "../src/client.js";
+import { githubRepositoryId } from "../src/environments.js";
 
-describe("EnvironmentsApi", () => {
-  test("creates an environment with the verified wire format", async () => {
-    let body: unknown;
-    const api = makeApi(async (_input, init) => {
-      body = JSON.parse(String(init?.body));
-      return Response.json(environmentWire());
-    });
-
-    const environment = await api.create({
-      label: "dummy-test",
-      repositories: ["github-1165432182"],
-    });
-
-    expect(body).toEqual({
-      label: "dummy-test",
-      repos: ["github-1165432182"],
-      machine_id: "wham-public/wham-universal",
-      description: "",
-      workspace_dir: "/workspace",
-      setup: [""],
-      maintenance_setup: [""],
-      env_vars: {
-        CODEX_ENV_PYTHON_VERSION: "3.12",
-        CODEX_ENV_NODE_VERSION: "20",
-        CODEX_ENV_RUBY_VERSION: "3.4.4",
-        CODEX_ENV_RUST_VERSION: "1.89.0",
-        CODEX_ENV_GO_VERSION: "1.24.3",
-        CODEX_ENV_BUN_VERSION: "1.2.14",
-        CODEX_ENV_PHP_VERSION: "8.4",
-        CODEX_ENV_JAVA_VERSION: "21",
-        CODEX_ENV_SWIFT_VERSION: "6.1",
-      },
-      auto_setup_settings: { use_auto_setup: true },
-    });
-    expect(environment).toMatchObject({
-      id: "env-1",
-      setupScripts: ["echo setup"],
-      environmentVariables: { FOO: "bar" },
-      secretNames: ["FOO_SECRET"],
-      networkAccess: { mode: "on", presetAllowlist: "all" },
-    });
-  });
-
-  test("patches environment variables, secrets, setup, and network settings", async () => {
-    let body: unknown;
-    const api = makeApi(async (_input, init) => {
-      body = JSON.parse(String(init?.body));
-      return Response.json(environmentWire());
-    });
-
-    const environment = await api.update("env-1", {
-      setupScript: "echo setup\necho done",
-      environmentVariables: { FOO: "bar" },
-      secrets: { FOO_SECRET: "secret" },
-      networkAccess: "unrestricted",
-    });
-
-    expect(body).toEqual({
-      setup: "echo setup\necho done",
-      env_vars: { FOO: "bar" },
-      secrets: { FOO_SECRET: "secret" },
-      agent_network_access: {
-        mode: "on",
-        preset_allowlist: "all",
-        allowlist_domains: "",
-        allowlist_rules: null,
-        denylist_domains: null,
-        safe_methods_only: null,
-      },
-    });
-    expect(environment.warnings).toEqual([
-      "Custom setup and maintenance scripts are ignored because autoSetupEnabled is true. Set it to false for these scripts to run.",
-    ]);
-  });
-
-  test("does not warn when custom scripts are enabled", async () => {
-    const api = makeApi(async () =>
-      Response.json({
-        ...environmentWire(),
-        auto_setup_settings: { use_auto_setup: false },
-      }),
-    );
-
-    const environment = await api.update("env-1", {
-      setupScript: "echo setup",
-      autoSetupEnabled: false,
-    });
-
-    expect(environment.warnings).toBeUndefined();
-  });
-
-  test("patches only supplied settings", async () => {
-    let url = "";
-    let body: unknown;
-    const api = makeApi(async (input, init) => {
-      url = String(input);
-      body = JSON.parse(String(init?.body));
-      return Response.json(environmentWire());
-    });
-
-    await api.update("env/with slash", {
-      cache: { postSetupCacheEnabled: false },
-    });
-
-    expect(url).toEndWith("/wham/environments/env%2Fwith%20slash");
-    expect(body).toEqual({
-      cache_settings: {
-        post_setup_cache_enabled: false,
-        cache_invalidation_key: "",
-      },
-    });
-  });
-
-  test("lists repository environments", async () => {
-    let url = "";
-    const api = makeApi(async (input) => {
-      url = String(input);
-      return Response.json([environmentWire()]);
-    });
-
-    expect(await api.listByRepository("owner name", "repo/name")).toHaveLength(
-      1,
-    );
-    expect(url).toEndWith(
-      "/wham/environments/by-repo/github/owner%20name/repo%2Fname",
-    );
-  });
-
-  test("gets environment details including secret names", async () => {
-    let url = "";
-    const api = makeApi(async (input) => {
-      url = String(input);
-      return Response.json(environmentWire());
-    });
-
-    const environment = await api.get("env/with slash");
-
-    expect(url).toEndWith(
-      "/wham/environments/env%2Fwith%20slash/with-creator-and-machine",
-    );
-    expect(environment.secretNames).toEqual(["FOO_SECRET"]);
-  });
-
-  test("tests an environment and aggregates SSE logs", async () => {
-    const requests: { url: string; accept: string; body: unknown }[] = [];
-    const api = makeApi(async (input, init) => {
+test("config create and draft save use versioned routes, refs, and revision guards", async () => {
+  const requests: { path: string; method: string; body: unknown }[] = [];
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (url, init) => {
       requests.push({
-        url: String(input),
-        accept: new Headers(init?.headers).get("accept") ?? "",
+        path: new URL(String(url)).pathname,
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      });
+      return Response.json({
+        id: "config",
+        draft: { id: "draft", revision: 2 },
+      });
+    },
+  });
+  await client.environments.create({
+    name: "test",
+    repositories: [{ repository_id: "github-123", ref: "main" }],
+  });
+  await client.environments.openDraft("config");
+  await client.environments.updateDraft("config", "draft", {
+    base_version_id: "version",
+    expected_revision: 1,
+    install_script: "echo ready",
+    start_skill: "Instructions",
+  });
+  expect(requests).toEqual([
+    {
+      path: "/v1/environment-configs",
+      method: "POST",
+      body: {
+        name: "test",
+        repositories: [{ repository_id: "github-123", ref: "main" }],
+        network_policy: {
+          type: "restricted",
+          presets: ["package_managers"],
+          egress_rules: [],
+        },
+        share_settings: "private",
+        start_onboarding: false,
+      },
+    },
+    {
+      path: "/v1/environment-configs/config/drafts",
+      method: "POST",
+      body: undefined,
+    },
+    {
+      path: "/v1/environment-configs/config/drafts/draft",
+      method: "PATCH",
+      body: {
+        base_version_id: "version",
+        expected_revision: 1,
+        install_script: "echo ready",
+        start_skill: "Instructions",
+      },
+    },
+  ]);
+});
+
+test("publication completes only after operation success then reads back config", async () => {
+  const requests: { path: string; body: unknown }[] = [];
+  let polls = 0;
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (url, init) => {
+      const path = new URL(String(url)).pathname;
+      requests.push({
+        path,
         body: init?.body ? JSON.parse(String(init.body)) : null,
       });
-      if (String(input).endsWith("/environments/test")) {
-        return new Response(
-          'data: {"type":"log","key":"system","line":"Starting test"}\r\n\r\ndata: {"type":"log","key":"setup_autodetect","line":"Configuring runtimes"}\r\n\r\ndata: [DONE]\r\n\r\n',
-          { headers: { "content-type": "text/event-stream" } },
-        );
+      if (path.endsWith("/begin")) {
+        return Response.json({ id: "operation", state: "PENDING" });
       }
-      return Response.json(environmentWire());
-    });
-
-    expect(await api.test("env-1")).toEqual({
-      success: true,
-      logs: [
-        { type: "log", key: "system", line: "Starting test" },
-        {
-          type: "log",
-          key: "setup_autodetect",
-          line: "Configuring runtimes",
-        },
-      ],
-    });
-    expect(requests[1]).toEqual({
-      url: "https://chatgpt.com/backend-api/wham/environments/test",
-      accept: "text/event-stream",
-      body: {
-        machine_id: "wham-public/wham-universal",
-        repos: ["github-1165432182"],
-        github_connector_id: "connector-1",
-        setup: ["echo setup"],
-        maintenance_setup: [],
-        workspace_dir: "/workspace",
-        env_vars: { FOO: "bar" },
-        secrets_with_domains: [
-          { name: "FOO_SECRET", domains: ["example.com"] },
-        ],
-        environment_id: "env-1",
-        agent_network_access: {
-          mode: "on",
-          preset_allowlist: "all",
-          allowlist_domains: "",
-          allowlist_rules: null,
-          denylist_domains: null,
-          safe_methods_only: null,
-        },
-        auto_setup_settings: { use_auto_setup: true },
-      },
-    });
+      if (path.includes("environment-operations")) {
+        return Response.json({
+          id: "operation",
+          state: ++polls === 1 ? "RUNNING" : "SUCCEEDED",
+        });
+      }
+      return Response.json({ id: "config", version_id: "published-version" });
+    },
   });
-
-  test("reports environment test error events as failure", async () => {
-    const api = makeApi(async (input) => {
-      if (String(input).endsWith("/environments/test")) {
-        return new Response(
-          'data: {"type":"server_error","key":"system","line":"An unexpected error occurred"}\n\n',
-        );
-      }
-      return Response.json(environmentWire());
-    });
-
-    expect(await api.test("env-1")).toMatchObject({
-      success: false,
-      logs: [{ type: "server_error" }],
-    });
+  const operation = await client.environments.beginPublish(
+    "config",
+    "draft",
+    2,
+    "retry-key",
+  );
+  await client.environments.waitForOperation(operation.id, { intervalMs: 1 });
+  await client.environments.completePublish(
+    "config",
+    "draft",
+    operation.id,
+    "editing-thread",
+  );
+  expect((await client.environments.get("config")).version_id).toBe(
+    "published-version",
+  );
+  expect(requests.map((x) => x.path)).toEqual([
+    "/v1/environment-configs/config/drafts/draft/approve/begin",
+    "/v1/environment-operations/operation",
+    "/v1/environment-operations/operation",
+    "/v1/environment-configs/config/drafts/draft/approve/complete",
+    "/v1/environment-configs/config",
+  ]);
+  expect(requests[0]?.body).toEqual({
+    expected_revision: 2,
+    idempotency_key: "retry-key",
+  });
+  expect(requests[3]?.body).toEqual({
+    operation_id: "operation",
+    thread_id: "editing-thread",
   });
 });
 
-test("githubRepositoryId rejects non-numeric IDs", async () => {
-  expect(githubRepositoryId("123")).toBe("github-123");
+test("failed publication never runs complete and retains operation identity", async () => {
+  const paths: string[] = [];
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (url) => {
+      paths.push(String(url));
+      return Response.json({ id: "operation", state: "FAILED" });
+    },
+  });
+  await expect(
+    client.environments.publish("config", "draft", {
+      expectedRevision: 1,
+      idempotencyKey: "retry-key",
+      threadId: "editing",
+    }),
+  ).rejects.toThrow("Publication operation operation");
+  expect(paths.some((x) => x.endsWith("/complete"))).toBe(false);
+});
+
+test("draft conflict is surfaced without automatic retry or lost revision guard", async () => {
+  let calls = 0;
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async () => {
+      calls++;
+      return Response.json({ error: { message: "conflict" } }, { status: 409 });
+    },
+  });
+  await expect(
+    client.environments.updateDraft("config", "draft", {
+      base_version_id: "base",
+      expected_revision: 0,
+    }),
+  ).rejects.toThrow("HTTP 409");
+  expect(calls).toBe(1);
+});
+
+test("config pagination preserves snake case and opaque IDs are URL encoded", async () => {
+  const urls: string[] = [];
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (url) => {
+      urls.push(String(url));
+      return Response.json({ data: [], next_cursor: "next" });
+    },
+  });
+  expect(
+    (
+      await client.environments.list({
+        scope: "workspace",
+        cursor: "next",
+        omitDraft: false,
+      })
+    ).next_cursor,
+  ).toBe("next");
+  await client.environments.getDraft("a/b", "c/d");
+  expect(urls[0]).toContain(
+    "scope=workspace&limit=100&cursor=next&omitDraft=false",
+  );
+  expect(urls[1]).toEndWith("/v1/environment-configs/a%2Fb/drafts/c%2Fd");
+  expect(githubRepositoryId(123)).toBe("github-123");
   expect(() => githubRepositoryId("owner/repo")).toThrow();
-  const api = makeApi(async () => Response.json(environmentWire()));
-  for (const repository of [
-    1165432182,
-    "github-not-numeric",
-  ] as unknown as RepositoryId[]) {
-    expect(
-      api.create({ label: "test", repositories: [repository] }),
-    ).rejects.toThrow("github-NUMERIC_ID");
-  }
 });
 
-function makeApi(
-  fetch: (
-    input: string | URL | Request,
-    init?: RequestInit,
-  ) => Promise<Response>,
-): EnvironmentsApi {
-  const auth = new AuthController({
-    tokenStore: new MemoryTokenStore({ accessToken: "access" }),
-    fetch,
+test("personal vault writes distinguish create, replacement, and metadata-only update", async () => {
+  const requests: { path: string; body: unknown }[] = [];
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (url, init) => {
+      requests.push({
+        path: new URL(String(url)).pathname,
+        body: JSON.parse(String(init?.body)),
+      });
+      return Response.json({
+        secrets: [{ id: "entry", name: "KEY", value: "must-not-return" }],
+      });
+    },
   });
-  return new EnvironmentsApi(new HttpClient({ auth, fetch }));
-}
-
-function environmentWire(): object {
-  return {
-    id: "env-1",
-    label: "dummy-test",
-    machine_id: "wham-public/wham-universal",
-    repos: ["github-1165432182"],
-    repo_map: {},
-    github_connector_id: "connector-1",
-    setup: ["echo setup"],
-    maintenance_setup: [],
-    env_vars: { FOO: "bar" },
-    secrets: { FOO_SECRET: "<REDACTED>" },
-    secrets_with_domains: [{ name: "FOO_SECRET", domains: ["example.com"] }],
-    agent_network_access: {
-      mode: "on",
-      preset_allowlist: "all",
-      allowlist_domains: "",
-      allowlist_rules: null,
-      denylist_domains: null,
-      safe_methods_only: null,
-    },
-    cache_settings: {
-      post_setup_cache_enabled: true,
-      cache_invalidation_key: "",
-    },
-    auto_setup_settings: { use_auto_setup: true },
-    permissions: { can_write: true, can_delete: true },
-    created_at: 1,
+  const fields = {
+    name: "KEY",
+    env_var: "KEY",
+    target: { type: "environment_config_ids" as const, ids: ["config"] },
   };
-}
+  expect(
+    await client.environments.savePersonalSecrets("not_sensitive", [
+      { ...fields, value: "first" },
+    ]),
+  ).toEqual({ secrets: [{ id: "entry", name: "KEY" }] });
+  await client.environments.savePersonalSecrets("sensitive", [
+    { ...fields, id: "entry", value: "replacement" },
+  ]);
+  await client.environments.savePersonalSecrets("sensitive", [
+    { ...fields, id: "entry", env_var: "RENAMED" },
+  ]);
+  expect(requests).toEqual([
+    {
+      path: "/v1/personal-secrets",
+      body: {
+        namespace: "not_sensitive",
+        secrets: [{ ...fields, value: "first" }],
+      },
+    },
+    {
+      path: "/v1/personal-secrets",
+      body: {
+        namespace: "sensitive",
+        secrets: [{ ...fields, id: "entry", value: "replacement" }],
+      },
+    },
+    {
+      path: "/v1/personal-secrets",
+      body: {
+        namespace: "sensitive",
+        secrets: [{ ...fields, id: "entry", env_var: "RENAMED" }],
+      },
+    },
+  ]);
+});
+
+test("shared values return references and attach through revision-guarded drafts", async () => {
+  const requests: { path: string; body: unknown }[] = [];
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (url, init) => {
+      requests.push({
+        path: new URL(String(url)).pathname,
+        body: JSON.parse(String(init?.body)),
+      });
+      return Response.json({
+        id: "value",
+        name: "KEY",
+        value: "must-not-return",
+      });
+    },
+  });
+  expect(
+    await client.environments.createValue({
+      namespace: "runtime",
+      name: "KEY",
+      value: "first",
+    }),
+  ).toEqual({ id: "value", name: "KEY" });
+  await client.environments.createValue({
+    namespace: "proxy",
+    name: "NETWORK",
+    value: "dummy",
+  });
+  const update = {
+    base_version_id: "base",
+    expected_revision: 4,
+    runtime_requirements: [
+      {
+        source: { type: "vault_secret" as const, id: "value" },
+        optional: false,
+        delivery: {
+          type: "direct_environment_variable" as const,
+          variable_name: "KEY",
+        },
+      },
+    ],
+    secrets: [
+      {
+        id: "network-value",
+        name: "NETWORK",
+        source: "environment" as const,
+        target: {
+          environment_variable: "NETWORK",
+          allowed_domains: ["example.com"],
+        },
+      },
+    ],
+  };
+  await client.environments.updateDraft("config", "draft", update);
+  expect(requests).toEqual([
+    {
+      path: "/v1/environment-values",
+      body: { namespace: "runtime", name: "KEY", value: "first" },
+    },
+    {
+      path: "/v1/environment-values",
+      body: { namespace: "proxy", name: "NETWORK", value: "dummy" },
+    },
+    { path: "/v1/environment-configs/config/drafts/draft", body: update },
+  ]);
+});

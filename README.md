@@ -1,7 +1,7 @@
 # mcp-server-codex-cloud
 
 An MCP server for running Codex Cloud tasks from your MCP client. Start tasks,
-follow up on results, inspect diffs and logs, and manage environments.
+follow up on results, inspect conversation output, and configure and publish environments.
 It uses an unofficial, undocumented API that may change.
 
 ## Run locally
@@ -42,7 +42,7 @@ Or add it to your MCP client's configuration:
 Use `--auth-file /absolute/path/auth.json` on both commands to change the
 credential location. Stop the server before signing in again.
 
-The npm package is not published yet. Until publication, run from this checkout:
+To run the current checkout:
 
 ```bash
 mise install
@@ -59,24 +59,37 @@ as its argument.
 
 | Capability | Tools |
 | --- | --- |
-| Find environments | `list_environments`, `get_environment`, `list_environments_by_repository` |
-| Configure and test environments, scripts, variables, and secrets | `create_environment`, `update_environment`, `test_environment` |
-| Start, cancel, and read tasks or diffs | `start_task`, `cancel_task`, `list_tasks`, `get_task`, `wait_for_task` |
-| Continue tasks and inspect conversation branches | `follow_up_task`, `list_task_turns`, `list_sibling_turns` |
-| Read available per-turn logs, including setup output | `get_task_logs` |
-| Refresh saved credentials manually | `refresh_auth` |
+| Start agent-driven environment setup | `create_environment`, `start_environment_setup` |
+| Find configs | `list_environments`, `get_environment` |
+| Create and rename configs | `create_environment`, `rename_environment` |
+| Edit scripts, start skill, repository refs, and network policy | `open_environment_draft`, `get_environment_draft`, `update_environment_draft` |
+| Publish drafts | `begin_environment_publish`, `get_environment_operation`, `wait_for_environment_operation`, `complete_environment_publish` |
+| Start and continue cloud threads | `start_task`, `follow_up_task`, `steer_task` |
+| Read results and interrupt turns | `list_tasks`, `get_task`, `list_task_turns`, `list_task_items`, `wait_for_task`, `cancel_task` |
+| Manage personal vault entries and shared values | `save_personal_secrets`, `create_environment_value`, `list_secret_metadata` |
+| Read model choices and integration metadata | `list_models`, `list_collaboration_modes`, `get_environment_vpn`, `list_secret_metadata` |
+| Refresh saved credentials | `refresh_auth` |
 
-For example, ask your MCP client to “Find my repository's environment, start a
-code review, wait for the result, then follow up asking for tests.” Task runs
-consume your Codex account usage. Environment updates replace supplied scripts
-and variable or secret maps. If a follow-up response is lost, check the turn
-history before resubmitting.
+To configure an environment, create it with a name and repository refs such as
+`{ "repository_id": "github-12345", "ref": "main" }`. Open a draft, read its
+`base_version_id` and `revision`, and save changes with `expected_revision`.
+Supply `install_script` and `start_skill` as strings.
 
-Set `autoSetupEnabled` to `false` when using a custom setup or maintenance
-script. Automatic setup ignores both custom scripts. The setup script initializes
-an uncached environment before Codex saves its container state. When that cached
-container resumes, Codex checks out the task branch and runs the optional
-maintenance script, which can update dependencies installed from an older commit.
+Publish by beginning an operation with a UUID idempotency key, waiting for
+`SUCCEEDED`, then completing it with the operation ID and editing thread ID.
+If waiting times out, keep polling the same operation. Read the published config
+to confirm the scripts before starting a task.
+
+Pass the config's `id` as `environmentConfigId` to `start_task`. Save the returned
+`thread.id` and `turn.id`; `wait_for_task` needs both. Continue a completed thread
+with `follow_up_task`, or add input to a running turn with `steer_task` and its
+`expectedTurnId`. Task runs consume Codex account usage. After a lost response,
+read the thread history before sending another prompt.
+
+`get_task` returns thread metadata. `list_task_turns` defaults to
+`itemsView: "full"`, which includes messages and tool results. File changes and
+command output remain in their original item formats. `cancel_task` requests an
+interrupt; use turn history to confirm its final status.
 
 ## Deploy to Cloudflare
 
@@ -150,5 +163,5 @@ The CLI uses `CodexAuthFileTokenStore`; the Worker uses `KvTokenStore` with
 automatic refresh disabled.
 
 Persist rotated tokens atomically, reject stale writes, and coordinate refreshes
-across clients sharing credentials. See [API.md](./API.md) for protocol details
+across clients sharing credentials. See [API.md](./API.md) for SDK usage
 and [src/token-store.ts](./src/token-store.ts) for the interface.

@@ -2,10 +2,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { CodexCloudClient } from "./client.js";
 import { fileDeviceAuth, waitForDeviceLogin } from "./device-auth.js";
-import { createMcpServer } from "./mcp.js";
+import { startStdioServer } from "./stdio.js";
 import { CodexAuthFileTokenStore } from "./token-store.js";
 
 try {
@@ -59,8 +58,7 @@ try {
   } else {
     await tokenStore.load();
     const client = new CodexCloudClient({ tokenStore });
-    const server = createMcpServer(client);
-    await server.connect(new StdioServerTransport());
+    await startStdioServer(client);
   }
 } catch (error) {
   const reason = error instanceof Error ? error.message : String(error);
