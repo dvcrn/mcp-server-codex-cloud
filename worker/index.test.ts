@@ -72,7 +72,9 @@ test("MCP calls upstream through VPC egress and reports upstream rejection", asy
   const egressFetch = mock(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const forwarded = new Request(input, init);
-      expect(new URL(forwarded.url).hostname).toBe("chatgpt.com");
+      expect(new URL(forwarded.url).hostname).toBe(
+        "codex-cloud-backend.chatgpt.com",
+      );
       expect(forwarded.headers.get("authorization")).toBe("Bearer access");
       expect(forwarded.redirect).toBe("manual");
       return Response.json({ private: "upstream detail" }, { status: 403 });

@@ -1,320 +1,349 @@
 import { setTimeout as delay } from "node:timers/promises";
+import type {
+  Model,
+  Page,
+  PageOptions,
+  RequestOptions,
+  RpcNotification,
+  Thread,
+  ThreadItem,
+  Turn,
+} from "./cloud-types.js";
 import { CodexCloudError } from "./errors.js";
 import type { HttpClient } from "./http.js";
 import { segment } from "./internal.js";
-import {
-  mapAttempt,
-  mapTaskDetails,
-  mapTaskHistory,
-  mapTaskLogs,
-  mapTaskSummary,
-  type TaskListItemWire,
-} from "./task-mappers.js";
+import type { RpcClient } from "./rpc.js";
 import type {
-  CancelledTask,
   CreatedTask,
-  CreatedTaskTurn,
   CreateTaskInput,
   FollowUpTaskInput,
-  ListTasksOptions,
-  TaskAttempt,
-  TaskDetails,
-  TaskHistory,
-  TaskLogEntry,
-  TaskPage,
-  TaskStatus,
-  WaitForTaskOptions,
+  ListTurnsOptions,
+  SetupEnvironmentInput,
+  WaitForTurnOptions,
 } from "./task-types.js";
 
 export type * from "./task-types.js";
 
 export class TasksApi {
-  public constructor(private readonly http: HttpClient) {}
+  public constructor(
+    private readonly http: HttpClient,
+    private readonly rpc: RpcClient,
+  ) {}
 
-  public async list(options: ListTasksOptions = {}): Promise<TaskPage> {
-    if (
-      options.limit !== undefined
-      && (!Number.isInteger(options.limit)
-        || options.limit < 1
-        || options.limit > 20)
-    ) {
-      throw new CodexCloudError(
-        "Task list limit must be an integer between 1 and 20",
-      );
-    }
-    const response = await this.http.request<TaskListWire>("/tasks/list", {
-      query: {
-        limit: options.limit,
-        task_filter: options.taskFilter ?? "current",
-        cursor: options.cursor,
-        environment_id: options.environmentId,
-      },
+  /** Lists cloud conversation threads with cursor pagination. */
+  public list(options: PageOptions = {}): Promise<Page<Thread>> {
+    return this.http.request("/v1/threads", {
+      query: { limit: options.limit ?? 20, cursor: options.cursor },
       signal: options.signal,
     });
-    return {
-      tasks: (response.items ?? []).map(mapTaskSummary),
-      cursor: response.cursor ?? null,
-    };
   }
 
+  /** Reads thread metadata; use listTurns for populated conversation items. */
+  public async get(
+    threadId: string,
+    options: RequestOptions = {},
+  ): Promise<Thread> {
+    const response = await this.http.request<{ thread: Thread }>(
+      `/v1/threads/${segment(threadId)}`,
+      options,
+    );
+    return response.thread;
+  }
+
+  /** Allocates a new cloud thread against a published environment config and starts its first turn. */
   public async create(
     input: CreateTaskInput,
-    options: { signal?: AbortSignal } = {},
+    options: RequestOptions = {},
   ): Promise<CreatedTask> {
-    if (!input.environmentId.trim()) {
-      throw new CodexCloudError("Environment ID must not be empty");
-    }
-    if (!input.prompt.trim()) {
-      throw new CodexCloudError("Task prompt must not be empty");
-    }
-    const attempts = input.attempts ?? 1;
-    if (!Number.isInteger(attempts) || attempts < 1 || attempts > 4) {
-      throw new CodexCloudError(
-        "Task attempts must be an integer between 1 and 4",
-      );
-    }
-
-    const inputItems: unknown[] = [
+    return this.#create(
+      input,
       {
-        type: "message",
-        role: "user",
-        content: [{ content_type: "text", text: input.prompt }],
+        environmentConfigId: input.environmentConfigId,
+        ...(input.cwd === undefined ? {} : { cwd: input.cwd }),
       },
-    ];
-    if (input.startingDiff) {
-      inputItems.push({
-        type: "pre_apply_patch",
-        output_diff: { diff: input.startingDiff },
-      });
-    }
-    const body: Record<string, unknown> = {
-      new_task: {
-        environment_id: input.environmentId,
-        branch: input.branch ?? "main",
-        run_environment_in_qa_mode: input.qaMode ?? false,
-      },
-      input_items: inputItems,
-    };
-    if (attempts > 1) {
-      body.metadata = { best_of_n: attempts };
-    }
-
-    const response = await this.http.request<CreateTaskResponseWire>("/tasks", {
-      method: "POST",
-      body,
-      signal: options.signal,
-    });
-    const id = response.task?.id ?? response.id;
-    if (!id) {
-      throw new CodexCloudError(
-        "Create-task response did not contain a task ID",
-      );
-    }
-    return { id, url: taskUrl(this.http.baseUrl, id) };
-  }
-
-  public async get(
-    id: string,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<TaskDetails> {
-    const response = await this.http.request<Record<string, unknown>>(
-      `/tasks/${segment(id)}`,
-      {
-        signal: options.signal,
-      },
+      options,
     );
-    return mapTaskDetails(id, response);
   }
 
-  /** Requests cancellation of a running task. */
-  public async cancel(
-    id: string,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<CancelledTask> {
-    await this.http.request(`/tasks/${segment(id)}/cancel`, {
-      method: "POST",
-      signal: options.signal,
-    });
-    return { id, cancelled: true };
+  /** Starts the cloud onboarding skill in a durable setup thread for an existing config. */
+  public async setupEnvironment(
+    input: SetupEnvironmentInput,
+    options: RequestOptions = {},
+  ): Promise<CreatedTask> {
+    return this.#create(
+      {
+        ...input,
+        prompt:
+          "Use $cloud-environment-onboarding:setup to set up this cloud environment",
+      },
+      { onboardingConfigId: input.environmentConfigId },
+      options,
+    );
   }
 
+  async #create(
+    input: Omit<CreateTaskInput, "environmentConfigId">,
+    environment:
+      | { environmentConfigId: string; cwd?: string }
+      | { onboardingConfigId: string },
+    options: RequestOptions,
+  ): Promise<CreatedTask> {
+    segment(
+      "onboardingConfigId" in environment
+        ? environment.onboardingConfigId
+        : environment.environmentConfigId,
+    );
+    validatePrompt(input.prompt);
+    const response = await this.rpc.request<{ thread: Thread }>(
+      "thread/start",
+      {
+        environments: [environment],
+        ...("onboardingConfigId" in environment
+          ? { serviceName: "codex_cloud", threadSource: "user" }
+          : {}),
+        deferredEnvironment: true,
+        pluginsMcp: { productSku: "codex" },
+        ...(input.model === undefined ? {} : { model: input.model }),
+        ...(input.serviceTier === undefined
+          ? {}
+          : { serviceTier: input.serviceTier }),
+      },
+      options,
+    );
+    if (!response.thread?.id) {
+      throw new CodexCloudError(
+        "Cloud thread creation returned no thread ID; list threads before retrying",
+      );
+    }
+    try {
+      const turn = await this.#startTurn(
+        { ...input, threadId: response.thread.id },
+        options,
+      );
+      return { thread: response.thread, turn };
+    } catch (error) {
+      // Allocation succeeded even if starting the first turn has an unknown outcome.
+      throw new CodexCloudError(
+        `Thread ${response.thread.id} was created, but its first turn failed or its result was lost. Read its turns before retrying.`,
+        { cause: error },
+      );
+    }
+  }
+
+  /** Resumes an existing thread and starts a follow-up turn using its retained environment. */
   public async followUp(
     input: FollowUpTaskInput,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<CreatedTaskTurn> {
-    segment(input.taskId);
-    segment(input.turnId);
-    if (!input.prompt.trim()) {
-      throw new CodexCloudError("Prompt must not be empty");
-    }
-    const response = await this.http.request<{
-      task?: { id?: string };
-      turn?: { id?: string };
-      user_turn?: { id?: string };
-    }>("/tasks", {
-      method: "POST",
-      signal: options.signal,
-      body: {
-        follow_up: {
-          task_id: input.taskId,
-          turn_id: input.turnId,
-          run_environment_in_qa_mode: input.qaMode ?? false,
-        },
-        input_items: [
-          {
-            type: "message",
-            role: "user",
-            content: [{ content_type: "text", text: input.prompt }],
-          },
-        ],
-      },
-    });
-    const turnId = response?.turn?.id;
-    const userTurnId = response?.user_turn?.id;
-    if (
-      response?.task?.id !== input.taskId
-      || typeof turnId !== "string"
-      || !turnId
-      || typeof userTurnId !== "string"
-      || !userTurnId
-    ) {
+    options: RequestOptions = {},
+  ): Promise<CreatedTask> {
+    validatePrompt(input.prompt);
+    const response = await this.resume(input.threadId, options);
+    if (response.thread.status?.type === "active") {
       throw new CodexCloudError(
-        "Follow-up response did not contain the expected task and turn IDs",
+        "Thread has an active turn; use steer with its expected turn ID or wait for completion before following up",
       );
     }
     return {
-      id: input.taskId,
-      url: taskUrl(this.http.baseUrl, input.taskId),
-      turnId,
-      userTurnId,
+      thread: response.thread,
+      turn: await this.#startTurn(input, options),
     };
   }
 
-  public async listTurns(
-    taskId: string,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<TaskHistory> {
-    return mapTaskHistory(
-      await this.http.request<unknown>(
-        `/tasks/${segment(taskId)}/turns`,
-        options,
-      ),
-    );
-  }
-
-  public async getLogs(
-    taskId: string,
-    turnId: string,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<TaskLogEntry[]> {
-    return mapTaskLogs(
-      await this.http.request<unknown>(
-        `/tasks/${segment(taskId)}/turns/${segment(turnId)}/logs`,
-        options,
-      ),
-    );
-  }
-
-  public async listSiblingTurns(
-    taskId: string,
-    turnId: string,
-    options: { signal?: AbortSignal } = {},
-  ): Promise<TaskAttempt[]> {
-    const response = await this.http.request<SiblingTurnsWire>(
-      `/tasks/${segment(taskId)}/turns/${segment(turnId)}/sibling_turns`,
-      { signal: options.signal },
-    );
-    return (response.sibling_turns ?? []).map(mapAttempt).sort(compareAttempts);
-  }
-
-  public async waitFor(
-    id: string,
-    options: WaitForTaskOptions = {},
-  ): Promise<TaskDetails> {
-    const intervalMs = options.intervalMs ?? 2_000;
-    const timeoutMs = options.timeoutMs ?? 10 * 60 * 1000;
-    if (intervalMs < 0 || timeoutMs < 0) {
+  /** Rejoins an existing thread without returning its entire history. */
+  public async resume(
+    threadId: string,
+    options: RequestOptions = {},
+  ): Promise<{ thread: Thread; [key: string]: unknown }> {
+    segment(threadId);
+    const response = await this.rpc.request<{
+      thread: Thread;
+      [key: string]: unknown;
+    }>("thread/resume", { threadId, excludeTurns: true }, options);
+    if (response.thread?.id !== threadId) {
       throw new CodexCloudError(
-        "Polling interval and timeout must not be negative",
+        "Cloud resume returned an unexpected thread ID",
       );
     }
-    const deadline = Date.now() + timeoutMs;
-    // An explicit controller, not AbortSignal.timeout: this must also cut off a
-    // transport that ignores cancellation and never settles, and only a real
-    // timer callback reliably fires while such a request is outstanding.
-    const expiry = new AbortController();
-    const timer = setTimeout(
-      () =>
-        expiry.abort(
-          new DOMException(`Timed out waiting for task ${id}`, "TimeoutError"),
-        ),
-      timeoutMs,
+    return response;
+  }
+
+  /** Adds input to a specific active turn using an expected-turn precondition. */
+  public async steer(
+    input: { threadId: string; expectedTurnId: string; prompt: string },
+    options: RequestOptions = {},
+  ): Promise<{ turnId: string }> {
+    segment(input.expectedTurnId);
+    validatePrompt(input.prompt);
+    await this.resume(input.threadId, options);
+    return this.rpc.request(
+      "turn/steer",
+      {
+        threadId: input.threadId,
+        expectedTurnId: input.expectedTurnId,
+        input: textInput(input.prompt),
+      },
+      options,
     );
-    const signal = options.signal
-      ? AbortSignal.any([options.signal, expiry.signal])
-      : expiry.signal;
-    try {
-      for (;;) {
-        const task = await this.get(id, { signal });
-        if (isTerminal(task.status)) {
-          return task;
-        }
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) {
-          throw new DOMException(
-            `Timed out waiting for task ${id}`,
-            "TimeoutError",
-          );
-        }
-        await delay(Math.min(intervalMs, remaining), undefined, { signal });
+  }
+
+  /** Requests interruption of the identified turn without affecting other threads. */
+  public async cancel(
+    threadId: string,
+    turnId: string,
+    options: RequestOptions = {},
+  ): Promise<{ threadId: string; turnId: string; interruptRequested: true }> {
+    segment(turnId);
+    await this.resume(threadId, options);
+    await this.rpc.request("turn/interrupt", { threadId, turnId }, options);
+    return { threadId, turnId, interruptRequested: true };
+  }
+
+  /** Reads a paginated turn history with explicit item hydration. */
+  public listTurns(
+    threadId: string,
+    options: ListTurnsOptions = {},
+  ): Promise<Page<Turn>> {
+    return this.http.request(`/v2/threads/${segment(threadId)}/turns`, {
+      query: {
+        limit: options.limit ?? 20,
+        cursor: options.cursor,
+        sortDirection: options.sortDirection ?? "desc",
+        itemsView: options.itemsView ?? "full",
+      },
+      signal: options.signal,
+    });
+  }
+
+  /** Reads paginated persisted items, including tool output and file-change items. */
+  public listItems(
+    threadId: string,
+    options: PageOptions & {
+      turnId?: string;
+      sortDirection?: "asc" | "desc";
+    } = {},
+  ): Promise<Page<ThreadItem>> {
+    return this.http.request(`/v2/threads/${segment(threadId)}/items`, {
+      query: {
+        limit: options.limit ?? 20,
+        cursor: options.cursor,
+        turnId: options.turnId,
+        sortDirection: options.sortDirection ?? "desc",
+      },
+      signal: options.signal,
+    });
+  }
+
+  /** Waits for the specified persisted turn, never an unrelated or previously completed turn. */
+  public async waitFor(
+    threadId: string,
+    turnId: string,
+    options: WaitForTurnOptions = {},
+  ): Promise<Turn> {
+    segment(threadId);
+    segment(turnId);
+    const intervalMs = options.intervalMs ?? 2_000;
+    const timeoutMs = options.timeoutMs ?? 45_000;
+    if (intervalMs < 1 || timeoutMs < 1) {
+      throw new CodexCloudError(
+        "Polling interval and timeout must be positive",
+      );
+    }
+    const signal = AbortSignal.any([
+      AbortSignal.timeout(timeoutMs),
+      ...(options.signal ? [options.signal] : []),
+    ]);
+    for (;;) {
+      let cursor: string | undefined;
+      let found: Turn | undefined;
+      do {
+        const page = await this.listTurns(threadId, {
+          limit: 100,
+          itemsView: "full",
+          ...(cursor ? { cursor } : {}),
+          signal,
+        });
+        found = page.data.find((turn) => turn.id === turnId);
+        cursor = page.nextCursor ?? undefined;
+      } while (!found && cursor);
+      if (
+        found
+        && ["completed", "interrupted", "failed"].includes(found.status)
+      ) {
+        return found;
       }
-    } finally {
-      clearTimeout(timer);
+      await delay(intervalMs, undefined, { signal });
     }
   }
-}
 
-interface TaskListWire {
-  items?: TaskListItemWire[];
-  cursor?: string | null;
-}
-
-interface CreateTaskResponseWire {
-  id?: string;
-  task?: { id?: string };
-}
-
-interface SiblingTurnsWire {
-  sibling_turns?: Record<string, unknown>[];
-}
-
-function isTerminal(status: TaskStatus): boolean {
-  return [
-    "completed",
-    "failed",
-    "cancelled",
-    "ready",
-    "applied",
-    "error",
-  ].includes(status);
-}
-
-function compareAttempts(left: TaskAttempt, right: TaskAttempt): number {
-  if (left.attemptPlacement !== null && right.attemptPlacement !== null) {
-    return left.attemptPlacement - right.attemptPlacement;
+  /** Observes live socket events and restricts delivery to the selected thread. */
+  public subscribe(
+    threadId: string,
+    listener: (event: RpcNotification) => void,
+  ): () => void {
+    segment(threadId);
+    return this.rpc.subscribe((event) => {
+      const params = event.params;
+      if (
+        params?.threadId === threadId
+        || (params?.thread as Thread | undefined)?.id === threadId
+      ) {
+        listener(event);
+      }
+    });
   }
-  if (left.attemptPlacement !== null) {
-    return -1;
+
+  /** Lists models with their current reasoning and service-tier choices. */
+  public listModels(
+    options: PageOptions & { includeHidden?: boolean } = {},
+  ): Promise<Page<Model>> {
+    return this.http.request("/v2/models", {
+      query: {
+        limit: options.limit ?? 100,
+        cursor: options.cursor,
+        includeHidden: options.includeHidden ?? false,
+      },
+      signal: options.signal,
+    });
   }
-  if (right.attemptPlacement !== null) {
-    return 1;
+
+  /** Reads supported collaboration modes from the backend. */
+  public listCollaborationModes(
+    options: RequestOptions = {},
+  ): Promise<{ data: Record<string, unknown>[] }> {
+    return this.http.request("/v2/collaboration-modes", options);
   }
-  return (left.createdAt?.getTime() ?? 0) - (right.createdAt?.getTime() ?? 0);
+
+  async #startTurn(
+    input: FollowUpTaskInput,
+    options: RequestOptions,
+  ): Promise<Turn> {
+    const response = await this.rpc.request<{ turn: Turn }>(
+      "turn/start",
+      {
+        threadId: input.threadId,
+        input: textInput(input.prompt),
+        ...(input.model === undefined ? {} : { model: input.model }),
+        ...(input.effort === undefined ? {} : { effort: input.effort }),
+        ...(input.serviceTier === undefined
+          ? {}
+          : { serviceTier: input.serviceTier }),
+      },
+      options,
+    );
+    if (!response.turn?.id) {
+      throw new CodexCloudError(
+        "Cloud turn response contained no turn ID; read history before retrying",
+      );
+    }
+    return response.turn;
+  }
 }
 
-function taskUrl(baseUrl: string, id: string): string {
-  const root = baseUrl.endsWith("/backend-api")
-    ? baseUrl.slice(0, -"/backend-api".length)
-    : baseUrl;
-  return `${root}/codex/tasks/${encodeURIComponent(id)}`;
+function textInput(prompt: string): unknown[] {
+  return [{ type: "text", text: prompt, text_elements: [] }];
+}
+
+function validatePrompt(prompt: string): void {
+  if (!prompt.trim()) {
+    throw new CodexCloudError("Prompt must not be empty");
+  }
 }

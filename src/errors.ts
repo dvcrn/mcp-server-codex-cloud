@@ -35,3 +35,16 @@ export class ApiError extends CodexCloudError {
     super(message);
   }
 }
+
+export class RpcError extends CodexCloudError {
+  public override readonly name: string = "RpcError";
+
+  public constructor(
+    public readonly code: number | undefined,
+    /** Upstream details may echo submitted secrets and must not be logged. */
+    public readonly detail?: string,
+    public readonly data?: unknown,
+  ) {
+    super(`Codex Cloud RPC failed${code === undefined ? "" : ` (${code})`}`);
+  }
+}

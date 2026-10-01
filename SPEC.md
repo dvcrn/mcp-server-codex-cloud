@@ -1,94 +1,47 @@
-# Spec: Codex Cloud MCP server
+# Codex Cloud MCP server
 
-## Objective
+Expose cloud environment configuration, draft publication, and thread execution
+over stdio and Streamable HTTP. Publish the same client as an ESM TypeScript SDK.
 
-Expose the internal API used by `codex cloud` as an MCP server, over stdio for
-local clients and over HTTP from a Cloudflare Worker. The underlying TypeScript
-client is also published as a library. It must support local Codex credentials
-and externally persisted tokens, environment management, and cloud task
-execution without exposing credentials in logs or process arguments.
+## Contracts
 
-## Tech stack
+- Use ChatGPT OAuth tokens from a configurable `TokenStore`.
+- Preserve rotated tokens atomically and reject stale file-store writes.
+- Use exact versioned HTTP paths on `codex-cloud-backend.chatgpt.com`.
+- Authenticate the cloud app-server socket with the account header and bearer
+  subprotocol, initialize once, and correlate responses by request ID.
+- Do not replay mutations when their outcome is unknown.
+- Keep config, version, draft, runtime, thread, operation, and turn IDs distinct.
+- Save drafts with base version and expected revision guards.
+- Store personal vault entries or shared values without returning their values.
+- Attach shared value IDs and personal variable requirements through drafts,
+  preserving unrelated entries in replaced lists.
+- Publish through begin, poll, complete, and published-config readback.
+- Create threads from published config IDs and retain thread and turn IDs.
+- Resume existing threads for follow-up, steer active turns with an expected
+  turn ID, and interrupt only the requested turn.
+- Read paginated turn/item history and preserve wire fields and discriminators.
+- Filter live notifications by thread and turn identity.
+- Keep tokens and upstream error details out of MCP errors and logs.
+- Close sockets after SDK use and at the end of each Worker MCP request.
 
-- TypeScript 7
-- ESM targeting modern Node.js
-- Native `fetch` for transport
-- Runtime dependencies: `@modelcontextprotocol/server`, `zod`, `proper-lockfile`
-- Bun for dependency management and tests
-- TypeScript compiler for JavaScript and declaration output
-- Biome for formatting and linting
-- mise as the task runner
+## Implementation
 
-## Commands
+TypeScript ESM targets Node.js 20+. HTTP uses injectable `fetch`. Node WebSockets
+use `ws`; Workers use an injected upgrade factory through `CODEX_EGRESS`.
+Runtime dependencies also include the MCP server SDK, Zod, and `proper-lockfile`.
+Bun manages dependencies and runs tests. Biome controls formatting.
 
-- Install: `bun install`
-- Check: `mise run check`
-- Test: `mise run test`
-- Build: `mise run build`
-- Package validation: `mise run pack`
+`src/` contains the SDK, MCP tools, and CLI. `worker/` contains HTTP routing and KV
+credential storage. `test/` covers transport behavior and orchestration with mocks.
+`examples/` contains SDK usage. `API.md` documents the caller API and
+`CODEX_CLOUD_NEW.md` tracks protocol evidence.
 
-## Project structure
+## Verification
 
-- `src/`: client, MCP server, and CLI entry point
-- `worker/`: Cloudflare Worker deployment and KV credential storage
-- `scripts/`: deployment, credential seeding, and smoke checks
-- `test/`: mocked unit tests
-- `examples/`: runnable examples
-- `dist/`: generated ESM and declarations
-- `API.md`: reverse-engineered protocol notes
+Run `mise run format`, `mise run check`, and `mise run pack`. Check covers lint,
+types, tests, Node build, Worker types, and Worker dry-run build. Live mutation
+checks must be explicitly invoked and use isolated configs/test threads. Verify
+published scripts and completed replies through independent HTTP reads.
 
-## Public API
-
-- `new CodexCloudClient(options)` accepts explicit credentials or a `TokenStore`.
-- `CodexCloudClient.fromCodexHome(options?)` reads and updates Codex's auth file.
-- Auth refresh occurs before expiration and persists rotated credentials through
-  the configured token store.
-- Environments: list globally/by repository, get by ID, create, and patch.
-- Tasks: list, create, follow up, retrieve details, list turns and sibling turns,
-  read logs, wait for completion, and extract assistant text or unified diffs.
-- MCP: the same operations are exposed as tools by `createMcpServer`.
-
-## Code style
-
-```ts
-const client = await CodexCloudClient.fromCodexHome();
-const environment = await client.environments.create({
-  label: "test",
-  machineId: "wham-public/wham-universal",
-  repositories: [CodexCloudClient.githubRepositoryId(12345)],
-});
-```
-
-Use strict types, descriptive camelCase names, explicit exported return types,
-and wire-format types only at the HTTP boundary.
-
-## Testing strategy
-
-- Mock `fetch` for routes, request bodies, errors, and auth refresh.
-- Use temporary files for auth-file persistence and permission tests.
-- Test response normalization and task-output extraction with representative
-  payloads.
-- Keep live tests opt-in so normal verification never mutates real resources.
-
-## Boundaries
-
-- Always: redact auth headers and secret values from errors; validate identifiers;
-  preserve rotated refresh tokens; expose abort signals and injectable `fetch`.
-- Ask first: publish to npm, delete environments, or add inferred endpoints.
-- Never: bundle credentials, print tokens, run live mutation tests by default, or
-  present this internal API as stable/public.
-
-## Success criteria
-
-- Consumers can initialize from `~/.codex/auth.json` or a custom token store.
-- Expiring OAuth tokens refresh and replacements are persisted.
-- Consumers can perform every environment and task operation verified in
-  `API.md`.
-- Build emits Node-compatible ESM and `.d.ts` files.
-- Tests, type checking, Biome, and package dry-run pass through mise.
-
-## Open questions
-
-- npm publication ownership and final package scope.
-- Stable server contracts for these undocumented endpoints.
-- Delete and cache-reset routes, which have not yet been tested.
+Deployment and npm publication require an explicit user request.

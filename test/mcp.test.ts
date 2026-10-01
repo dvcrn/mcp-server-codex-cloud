@@ -2,8 +2,25 @@ import { expect, test } from "bun:test";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { CodexCloudClient } from "../src/client.js";
 import { createMcpServer } from "../src/mcp.js";
+import { FakeSocket } from "./fake-socket.js";
 
-test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", async () => {
+async function connect(sdk: CodexCloudClient) {
+  const server = createMcpServer(sdk);
+  const client = new Client({ name: "test", version: "1" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await server.connect(a);
+  await client.connect(b);
+  return {
+    client,
+    close: async () => {
+      sdk.close();
+      await client.close();
+      await server.close();
+    },
+  };
+}
+
+test("MCP exposes config publication and thread tools with new input contracts", async () => {
   const requests: { url: string; body: unknown }[] = [];
   const sdk = new CodexCloudClient({
     tokens: { accessToken: "private", refreshToken: "refresh" },
@@ -12,80 +29,63 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
         url: String(url),
         body: init?.body ? JSON.parse(String(init.body)) : null,
       });
-      if (String(url).includes("oauth/token")) {
-        return Response.json({ access_token: "rotated-private" });
-      }
-      return Response.json({
-        id: "env",
-        label: "Dummy",
-        machine_id: "machine",
-        auto_setup_settings: { use_auto_setup: true },
-      });
+      return Response.json(
+        String(url).includes("oauth/token")
+          ? { access_token: "rotated-private" }
+          : { id: "config" },
+      );
     },
   });
-  const server = createMcpServer(sdk);
-  const client = new Client({ name: "test", version: "1" });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a);
-  await client.connect(b);
+  const { client, close } = await connect(sdk);
   try {
     const tools = (await client.listTools()).tools;
-    expect(tools).toHaveLength(16);
-    const createEnvironment = tools.find(
-      (tool) => tool.name === "create_environment",
-    );
-    expect(createEnvironment?.description).toContain(
-      "first look up its numeric ID",
-    );
-    expect(JSON.stringify(createEnvironment?.inputSchema)).toContain(
-      "resolve its numeric ID first using the GitHub API, gh CLI, or another GitHub tool",
-    );
-    const invalidRepository = await client.callTool({
-      name: "create_environment",
-      arguments: { label: "test", repositories: [1165432182] },
-    });
-    expect(invalidRepository.isError).toBe(true);
-    expect(JSON.stringify(invalidRepository)).toContain(
-      "Repository ID must be a string in github-NUMERIC_ID format, for example github-23123123",
-    );
-    expect(requests).toHaveLength(0);
+    for (const name of [
+      "create_environment",
+      "update_environment_draft",
+      "begin_environment_publish",
+      "complete_environment_publish",
+      "start_task",
+      "follow_up_task",
+      "steer_task",
+      "cancel_task",
+      "list_task_items",
+      "wait_for_task",
+    ]) {
+      expect(tools.some((tool) => tool.name === name)).toBe(true);
+    }
+    expect(tools.some((tool) => tool.name === "test_environment")).toBe(false);
     const invalid = await client.callTool({
-      name: "start_task",
-      arguments: { environmentId: "env", prompt: "hi", attempts: 5 },
+      name: "create_environment",
+      arguments: {
+        name: "test",
+        repositories: [{ repository_id: 123, ref: "main" }],
+      },
     });
     expect(invalid.isError).toBe(true);
     expect(requests).toHaveLength(0);
-    const updateEnvironment = await client.callTool({
-      name: "update_environment",
+    const updated = await client.callTool({
+      name: "update_environment_draft",
       arguments: {
-        id: "env",
+        id: "config",
+        draftId: "draft",
         update: {
-          setupScript: "echo setup",
-          maintenanceScript: "echo maintenance",
-          cache: { postSetupCacheEnabled: true },
+          base_version_id: "version",
+          expected_revision: 1,
+          install_script: "echo ready",
+          start_skill: "Instructions",
         },
       },
     });
+    expect(updated.isError).not.toBe(true);
+    expect(requests[0]?.url).toEndWith(
+      "/v1/environment-configs/config/drafts/draft",
+    );
     expect(requests[0]?.body).toEqual({
-      setup: "echo setup",
-      maintenance_setup: "echo maintenance",
-      cache_settings: {
-        post_setup_cache_enabled: true,
-        cache_invalidation_key: "",
-      },
+      base_version_id: "version",
+      expected_revision: 1,
+      install_script: "echo ready",
+      start_skill: "Instructions",
     });
-    expect(JSON.stringify(updateEnvironment)).toContain(
-      "Custom setup and maintenance scripts are ignored",
-    );
-    const updateEnvironmentTool = tools.find(
-      (tool) => tool.name === "update_environment",
-    );
-    expect(updateEnvironmentTool?.description).toContain(
-      "set autoSetupEnabled to false",
-    );
-    expect(JSON.stringify(updateEnvironmentTool?.inputSchema)).toContain(
-      "when a cached container resumes",
-    );
     const refreshed = await client.callTool({
       name: "refresh_auth",
       arguments: {},
@@ -93,181 +93,170 @@ test("MCP validates inputs, dispatches scripts, and keeps auth tokens private", 
     expect(JSON.stringify(refreshed)).not.toContain("private");
     expect(refreshed.isError).not.toBe(true);
   } finally {
-    await client.close();
-    await server.close();
+    await close();
   }
 });
 
-test("MCP dispatches history, logs and follow-ups with safe retry guidance", async () => {
+test("MCP cannot complete a pending publication", async () => {
+  let completed = false;
   const sdk = new CodexCloudClient({
-    tokens: { accessToken: "test" },
-    fetch: async (url, init) => {
-      if (String(url).endsWith("/logs")) {
-        return Response.json({
-          logs: [
-            {
-              key: {
-                name: "setup",
-                type: "UserSetupScript",
-                created_at: "2026-09-07T00:00:00",
-              },
-              line: "setup OK",
-            },
-          ],
-        });
+    tokens: { accessToken: "private" },
+    fetch: async (url) => {
+      if (String(url).endsWith("/complete")) {
+        completed = true;
       }
-      if (String(url).endsWith("/turns")) {
-        return Response.json({ current_turn_id: null, turn_mapping: {} });
-      }
-      const body = JSON.parse(String(init?.body));
-      if (body.input_items[0].content[0].text === "lose response") {
-        throw new Error("private-upstream-detail");
-      }
-      return Response.json({
-        task: { id: body.follow_up.task_id },
-        user_turn: { id: "user" },
-        turn: { id: "assistant" },
-      });
+      return Response.json({ id: "operation", state: "RUNNING" });
     },
   });
-  const server = createMcpServer(sdk);
-  const client = new Client({ name: "history-test", version: "1" });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a);
-  await client.connect(b);
+  const { client, close } = await connect(sdk);
   try {
-    const tools = (await client.listTools()).tools;
-    expect(
-      tools.find((tool) => tool.name === "follow_up_task")?.annotations
-        ?.readOnlyHint,
-    ).toBe(false);
-    for (const name of ["list_task_turns", "get_task_logs"]) {
-      expect(
-        tools.find((tool) => tool.name === name)?.annotations?.readOnlyHint,
-      ).toBe(true);
-    }
-    const history = await client.callTool({
-      name: "list_task_turns",
-      arguments: { taskId: "task" },
-    });
-    expect(history.isError).not.toBe(true);
-    expect(history.content).toEqual([
-      {
-        type: "text",
-        text: JSON.stringify({ currentTurnId: null, turns: [] }),
+    const result = await client.callTool({
+      name: "complete_environment_publish",
+      arguments: {
+        id: "config",
+        draftId: "draft",
+        operationId: "operation",
+        threadId: "thread",
       },
-    ]);
-    const logs = await client.callTool({
-      name: "get_task_logs",
-      arguments: { taskId: "task", turnId: "turn" },
     });
-    expect(logs.isError).not.toBe(true);
-    expect(JSON.stringify(logs)).toContain("setup OK");
-    const follow = await client.callTool({
+    expect(result.isError).toBe(true);
+    expect(completed).toBe(false);
+  } finally {
+    await close();
+  }
+});
+
+test("MCP follow-up sends text through the socket and redacts RPC error details", async () => {
+  const socket = new FakeSocket((request, current) => {
+    if (request.method === "initialize") {
+      current.reply(request, {});
+    }
+    if (request.method === "thread/resume") {
+      current.reply(request, { thread: { id: "thread" } });
+    }
+    if (request.method === "turn/start") {
+      current.emit({
+        id: request.id,
+        error: { code: -32600, message: "private secret echo" },
+      });
+    }
+  });
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "private" },
+    socketFactory: async () => socket,
+  });
+  const { client, close } = await connect(sdk);
+  try {
+    const result = await client.callTool({
       name: "follow_up_task",
-      arguments: { taskId: "task", turnId: "turn", prompt: "hi" },
+      arguments: { threadId: "thread", prompt: "hello" },
     });
-    expect(follow.isError).not.toBe(true);
-    expect(JSON.stringify(follow)).toContain("userTurnId");
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result)).not.toContain("private");
+    expect(socket.sent.at(-1)?.method).toBe("turn/start");
+  } finally {
+    await close();
+  }
+});
+
+test("vault tools validate creation and preserve omitted values without exposing responses", async () => {
+  const requests: unknown[] = [];
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "private" },
+    fetch: async (url, init) => {
+      requests.push(JSON.parse(String(init?.body)));
+      const entry = {
+        id: "entry",
+        name: "KEY",
+        value: "echoed-upstream-secret",
+      };
+      return Response.json(
+        String(url).includes("personal-secrets") ? { secrets: [entry] } : entry,
+      );
+    },
+  });
+  const { client, close } = await connect(sdk);
+  try {
+    const target = { type: "environment_config_ids", ids: ["config"] };
     const invalid = await client.callTool({
-      name: "follow_up_task",
-      arguments: { taskId: "task", turnId: "turn", prompt: " " },
+      name: "save_personal_secrets",
+      arguments: {
+        namespace: "sensitive",
+        secrets: [{ name: "KEY", env_var: "KEY", target }],
+      },
     });
     expect(invalid.isError).toBe(true);
-    const lost = await client.callTool({
-      name: "follow_up_task",
-      arguments: { taskId: "task", turnId: "turn", prompt: "lose response" },
-    });
-    expect(lost.isError).toBe(true);
-    expect(JSON.stringify(lost)).toContain("Check list_task_turns");
-    expect(JSON.stringify(lost)).not.toContain("private-upstream-detail");
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
-
-test("MCP cancels tasks and reports invalid task states", async () => {
-  let status = 204;
-  const sdk = new CodexCloudClient({
-    tokens: { accessToken: "test" },
-    fetch: async () => new Response(null, { status }),
-  });
-  const server = createMcpServer(sdk);
-  const client = new Client({ name: "cancel-test", version: "1" });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a);
-  await client.connect(b);
-  try {
-    const tools = (await client.listTools()).tools;
-    const cancelTool = tools.find((tool) => tool.name === "cancel_task");
-    expect(cancelTool?.annotations?.readOnlyHint).toBe(false);
-    expect(cancelTool?.description).toContain("already cancelled");
-
-    const cancelled = await client.callTool({
-      name: "cancel_task",
-      arguments: { id: "task-1" },
-    });
-    expect(cancelled.isError).not.toBe(true);
-    expect(cancelled.content).toEqual([
-      {
-        type: "text",
-        text: JSON.stringify({ id: "task-1", cancelled: true }),
+    expect(requests).toHaveLength(0);
+    const saved = await client.callTool({
+      name: "save_personal_secrets",
+      arguments: {
+        namespace: "sensitive",
+        secrets: [{ id: "entry", name: "KEY", env_var: "RENAMED", target }],
       },
-    ]);
-
-    status = 409;
-    const rejected = await client.callTool({
-      name: "cancel_task",
-      arguments: { id: "task-1" },
     });
-    expect(rejected.isError).toBe(true);
-    expect(JSON.stringify(rejected)).toContain(
-      "cannot be cancelled in its current state",
-    );
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
-
-test("MCP runs environment tests and returns aggregated logs", async () => {
-  const sdk = new CodexCloudClient({
-    tokens: { accessToken: "test" },
-    fetch: async (url) => {
-      if (String(url).endsWith("/environments/test")) {
-        return new Response(
-          'data: {"type":"log","key":"system","line":"Setup complete"}\n\n',
-        );
-      }
-      return Response.json({
-        id: "env-1",
-        label: "Test",
-        machine_id: "machine",
-        repos: ["github-1"],
-      });
-    },
-  });
-  const server = createMcpServer(sdk);
-  const client = new Client({ name: "environment-test", version: "1" });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(a);
-  await client.connect(b);
-  try {
-    const tools = (await client.listTools()).tools;
-    expect(
-      tools.find((tool) => tool.name === "test_environment")?.annotations
-        ?.readOnlyHint,
-    ).toBe(false);
-
-    const result = await client.callTool({
-      name: "test_environment",
-      arguments: { id: "env-1" },
+    expect(saved.isError).not.toBe(true);
+    expect(requests[0]).toEqual({
+      namespace: "sensitive",
+      secrets: [{ id: "entry", name: "KEY", env_var: "RENAMED", target }],
     });
-    expect(result.isError).not.toBe(true);
-    expect(JSON.stringify(result)).toContain("Setup complete");
+    expect(JSON.stringify(saved)).not.toContain("echoed-upstream-secret");
+    const shared = await client.callTool({
+      name: "create_environment_value",
+      arguments: { namespace: "proxy", name: "KEY", value: "dummy-input" },
+    });
+    expect(shared.isError).not.toBe(true);
+    expect(JSON.stringify(shared)).not.toContain("echoed-upstream-secret");
+    expect(JSON.stringify(shared)).not.toContain("dummy-input");
+    const attached = await client.callTool({
+      name: "update_environment_draft",
+      arguments: {
+        id: "config",
+        draftId: "draft",
+        update: {
+          base_version_id: "base",
+          expected_revision: 3,
+          runtime_requirements: [
+            {
+              source: { type: "user_provided" },
+              optional: true,
+              delivery: {
+                type: "direct_environment_variable",
+                variable_name: "KEY",
+              },
+            },
+          ],
+          secrets: [
+            {
+              id: "shared",
+              name: "NETWORK",
+              source: "environment",
+              optional: false,
+              target: {
+                environment_variable: "NETWORK",
+                allowed_domains: ["example.com"],
+              },
+            },
+            {
+              name: "PERSONAL",
+              source: "user_provided",
+              optional: true,
+              target: {
+                environment_variable: "PERSONAL",
+                allowed_domains: [],
+              },
+            },
+          ],
+        },
+      },
+    });
+    expect(attached.isError).not.toBe(true);
+    expect(requests[2]).toMatchObject({
+      secrets: [
+        { id: "shared", source: "environment", optional: false },
+        { source: "user_provided", optional: true },
+      ],
+    });
   } finally {
-    await client.close();
-    await server.close();
+    await close();
   }
 });

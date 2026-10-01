@@ -5,32 +5,19 @@ export type {
   CodexHomeClientOptions,
 } from "./client.js";
 export { CodexCloudClient } from "./client.js";
-export type {
-  AgentNetworkAccess,
-  AgentNetworkAccessInput,
-  CloudEnvironment,
-  CreateEnvironmentInput,
-  EnvironmentCacheSettings,
-  EnvironmentCacheSettingsInput,
-  EnvironmentPermissions,
-  EnvironmentTestLog,
-  EnvironmentTestResult,
-  RepositoryId,
-  UpdateEnvironmentInput,
-} from "./environments.js";
-export {
-  EnvironmentsApi,
-  githubRepositoryId,
-  unrestrictedNetworkAccess,
-} from "./environments.js";
+export type * from "./cloud-types.js";
+export type * from "./environments.js";
+export { EnvironmentsApi, githubRepositoryId } from "./environments.js";
 export {
   ApiError,
   AuthenticationError,
   CodexCloudError,
+  RpcError,
   TokenRefreshError,
 } from "./errors.js";
 export type { ApiRequestOptions, HttpClientOptions } from "./http.js";
 export { normalizeBaseUrl } from "./http.js";
+export type { CloudSocket, SocketFactory } from "./rpc.js";
 export type * from "./task-types.js";
 export { TasksApi } from "./tasks.js";
 export type {

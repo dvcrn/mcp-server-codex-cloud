@@ -10,7 +10,7 @@ export interface HttpClientOptions {
 }
 
 export interface ApiRequestOptions {
-  method?: "GET" | "POST" | "PATCH";
+  method?: "GET" | "POST" | "PATCH" | "DELETE";
   query?: Record<string, string | number | boolean | null | undefined>;
   body?: unknown;
   signal?: AbortSignal | undefined;
@@ -20,16 +20,12 @@ export class HttpClient {
   public readonly baseUrl: string;
   readonly #auth: AuthController;
   readonly #fetch: Fetch;
-  readonly #prefix: "/wham" | "/api/codex";
   readonly #userAgent: string;
 
   public constructor(options: HttpClientOptions) {
     this.baseUrl = normalizeBaseUrl(
-      options.baseUrl ?? "https://chatgpt.com/backend-api",
+      options.baseUrl ?? "https://codex-cloud-backend.chatgpt.com",
     );
-    this.#prefix = this.baseUrl.includes("/backend-api")
-      ? "/wham"
-      : "/api/codex";
     this.#auth = options.auth;
     this.#fetch = options.fetch;
     this.#userAgent = options.userAgent ?? "codex-typescript-sdk/0.0.0";
@@ -145,7 +141,7 @@ export class HttpClient {
       headers.set("content-type", "application/json");
     }
 
-    const init: RequestInit = { method, headers };
+    const init: RequestInit = { method, headers, redirect: "manual" };
     if (options.body !== undefined) {
       init.body = JSON.stringify(options.body);
     }
@@ -156,7 +152,7 @@ export class HttpClient {
   }
 
   #url(path: `/${string}`, query?: ApiRequestOptions["query"]): string {
-    const url = new URL(`${this.baseUrl}${this.#prefix}${path}`);
+    const url = new URL(`${this.baseUrl}${path}`);
     if (query) {
       for (const [key, value] of Object.entries(query)) {
         if (value !== undefined && value !== null) {
@@ -173,14 +169,12 @@ export function normalizeBaseUrl(input: string): string {
   if (url.protocol !== "https:") {
     throw new CodexCloudError("Codex Cloud base URL must use HTTPS");
   }
-  let pathname = url.pathname.replace(/\/+$/, "");
-  if (
-    (url.hostname === "chatgpt.com" || url.hostname === "chat.openai.com")
-    && !pathname.includes("/backend-api")
-  ) {
-    pathname += "/backend-api";
+  if (url.username || url.password || url.search || url.hash) {
+    throw new CodexCloudError(
+      "Codex Cloud base URL must not contain credentials, query, or fragment",
+    );
   }
-  url.pathname = pathname;
+  url.pathname = url.pathname.replace(/\/+$/, "");
   return url.toString().replace(/\/$/, "");
 }
 
