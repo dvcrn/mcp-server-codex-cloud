@@ -67,7 +67,7 @@ as its argument.
 | Publish drafts | `begin_environment_publish`, `get_environment_operation`, `wait_for_environment_operation`, `complete_environment_publish` |
 | Start and continue cloud threads | `start_task`, `follow_up_task`, `steer_task` |
 | Read results and interrupt turns | `list_tasks`, `get_task`, `list_task_turns`, `list_task_items`, `wait_for_task`, `cancel_task` |
-| Manage personal vault entries and shared values | `save_personal_secrets`, `create_environment_value`, `list_secret_metadata` |
+| Manage personal vault entries and shared values | `save_personal_secrets`, `delete_personal_secrets`, `create_environment_value`, `list_secret_metadata` |
 | Read model choices and integration metadata | `list_models`, `list_collaboration_modes`, `get_environment_vpn`, `list_secret_metadata` |
 | Refresh saved credentials | `refresh_auth` |
 

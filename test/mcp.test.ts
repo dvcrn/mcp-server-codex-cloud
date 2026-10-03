@@ -303,3 +303,50 @@ test("setup allocation rejection supplies recovery guidance without leaking back
     await close();
   }
 });
+
+test("MCP personal vault deletion validates inputs, declares mutation, and returns only deleted references", async () => {
+  const methods: string[] = [];
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "private" },
+    fetch: async (_url, init) => {
+      methods.push(init?.method ?? "GET");
+      return Response.json({
+        secrets: [{ id: "entry", name: "KEY", value: "upstream-value" }],
+        value: "upstream-value",
+      });
+    },
+  });
+  const { client, close } = await connect(sdk);
+  try {
+    const tools = (await client.listTools()).tools;
+    const tool = tools.find(({ name }) => name === "delete_personal_secrets");
+    expect(tool?.annotations?.readOnlyHint).toBe(false);
+    expect(tool?.annotations?.destructiveHint).toBe(true);
+    for (const arguments_ of [
+      { namespace: "sensitive", ids: [] },
+      { namespace: "sensitive", ids: [" "] },
+      { namespace: "runtime", ids: ["entry"] },
+      { namespace: "sensitive", ids: new Array(101).fill("entry") },
+      { namespace: "sensitive", ids: ["entry"], value: "unexpected" },
+    ]) {
+      const result = await client.callTool({
+        name: "delete_personal_secrets",
+        arguments: arguments_,
+      });
+      expect(result.isError).toBe(true);
+    }
+    expect(methods).toEqual([]);
+
+    const result = await client.callTool({
+      name: "delete_personal_secrets",
+      arguments: { namespace: "sensitive", ids: ["entry"] },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toEqual([
+      { type: "text", text: '{"deleted":[{"id":"entry","name":"KEY"}]}' },
+    ]);
+    expect(methods).toEqual(["GET", "DELETE"]);
+  } finally {
+    await close();
+  }
+});

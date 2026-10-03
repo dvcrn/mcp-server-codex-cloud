@@ -85,6 +85,16 @@ and `sensitive` for network secrets. Supply `name`, `env_var`, and a `target` of
 updates can omit `value` to preserve it. Results contain IDs and names only.
 The environment must also request a personal variable through a runtime requirement.
 
+`deletePersonalSecrets(namespace, ids)` deletes one or more personal vault entries
+and returns `{ deleted: [{ id, name }] }`. Names come from metadata listing;
+values are never requested. All IDs must exist in that namespace before any
+entry is deleted. Duplicate IDs are deleted once. Deletions stop on the first
+failure and the error reports prior confirmed deletions. List metadata before
+retrying because the failed request may have reached the backend.
+
+The provisional delete route is `DELETE /v1/personal-secrets/{id}?namespace=...`,
+with no request body. Backend support still needs live verification.
+
 Shared values use `createValue({ namespace, name, value })`. Use `runtime` for
 variables or `proxy` for network secrets. Each call returns a new value reference;
 attach its ID to a draft and publish to apply it:

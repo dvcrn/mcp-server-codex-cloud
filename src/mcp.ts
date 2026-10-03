@@ -319,6 +319,19 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
         { signal },
       ),
   );
+
+  tool(
+    "delete_personal_secrets",
+    "Delete personal vault entries by IDs from list_secret_metadata in the specified namespace. Returns deleted IDs and names only. Stops on failure and reports confirmed deletions; list metadata before retrying. The delete route is provisional pending live verification.",
+    {
+      namespace: z.enum(["not_sensitive", "sensitive"]),
+      ids: z.array(id).min(1).max(100),
+    },
+    false,
+    (a, signal) =>
+      client.environments.deletePersonalSecrets(a.namespace, a.ids, { signal }),
+  );
+
   tool(
     "create_environment_value",
     "Store a shared value and return its ID and name only. runtime is a direct variable, proxy is a network secret. Attach its ID using update_environment_draft, then publish. Replacements create a new ID; this tool alone does not update the environment.",
