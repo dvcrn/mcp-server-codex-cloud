@@ -213,6 +213,13 @@ Treat IDs as opaque. Config IDs, version IDs, runtime IDs, and thread IDs are di
 
 Observed editing sequence:
 
+This is the backend draft/publication sequence, not a complete native UI
+initialization contract. The native client also registers the edit session in
+persisted client state. REST allocation, naming, and resuming alone can leave
+the thread absent from the sidebar; a first turn can expose it without the
+environment icon or Continue editing state. See the supported
+[editing workflow](API.md#existing-environment-editing).
+
 1. Read or create a config.
 2. Create/open its editing runtime with `POST /environment-configs/{configId}/drafts`. The response contains `draft_id`, `environment_id`, and `thread_id`.
 3. Read the config plus draft using the explicit draft ID.

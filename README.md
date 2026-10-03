@@ -63,7 +63,7 @@ as its argument.
 | Find configs | `list_environments`, `get_environment` |
 | Rename task threads | `rename_task` |
 | Create and rename configs | `create_environment`, `rename_environment` |
-| Edit scripts, start skill, repository refs, and network policy | `open_environment_draft`, `get_environment_draft`, `update_environment_draft` |
+| Read drafts and update config-owned onboarding drafts | `open_environment_draft`, `get_environment_draft`, `update_environment_draft` |
 | Publish drafts | `begin_environment_publish`, `get_environment_operation`, `wait_for_environment_operation`, `complete_environment_publish` |
 | Start and continue cloud threads | `start_task`, `follow_up_task`, `steer_task` |
 | Read results and interrupt turns | `list_tasks`, `get_task`, `list_task_turns`, `list_task_items`, `wait_for_task`, `cancel_task`, `archive_task`, `restore_task` |
@@ -71,15 +71,18 @@ as its argument.
 | Read model choices and integration metadata | `list_models`, `list_collaboration_modes`, `get_environment_vpn`, `list_secret_metadata` |
 | Refresh saved credentials | `refresh_auth` |
 
-To configure an environment, create it with a name and repository refs such as
-`{ "repository_id": "github-12345", "ref": "main" }`. Open a draft, read its
-`base_version_id` and `revision`, and save changes with `expected_revision`.
-Supply `install_script` and `start_skill` as strings.
+For new environments, use `create_environment` with `start_onboarding: true`,
+then review the saved onboarding draft. For an existing published environment,
+initialize editing with **Edit environment** in the native Codex UI and retain
+its exact config, draft, runtime, and editing thread IDs. The MCP server rejects
+new draft allocation and direct editing-session writes because it cannot
+establish the native UI editing state. See the
+[editing and recovery workflow](API.md#existing-environment-editing).
 
-Publish by beginning an operation with a UUID idempotency key, waiting for
-`SUCCEEDED`, then completing it with the operation ID and editing thread ID.
-If waiting times out, keep polling the same operation. Read the published config
-to confirm the scripts before starting a task.
+After reviewing the exact draft, begin publication with a UUID idempotency key,
+wait for `SUCCEEDED`, and complete with the original operation, draft, editing
+thread, and returned scope. Keep polling the same operation after a timeout.
+Read back the published config before reporting success.
 
 Pass the config's `id` as `environmentConfigId` to `start_task`. Save the returned
 `thread.id` and `turn.id`; `wait_for_task` needs both. Continue a completed thread

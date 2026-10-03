@@ -178,21 +178,21 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "open_environment_draft",
-    "Return the existing pending config draft and its runtime, or open a new editing draft. Keep draft_id, environment_id, and thread_id for saving and publishing.",
+    "Return an existing pending onboarding draft and its owning runtime. New editing sessions must be initialized with Edit environment in the Codex UI; this tool rejects allocation rather than creating an invisible or unregistered chat. Retain the native draft_id, environment_id, and thread_id for subsequent reads and publication.",
     { id },
     false,
     (a, signal) => client.environments.openDraft(a.id, { signal }),
   );
   tool(
     "get_environment_draft",
-    "Read an editing-session or onboarding draft and its base version and revision.",
+    "Read an editing-session or onboarding draft and its base version and revision. Use the original config ID and exact draft ID. An editing-session draft can exist even when get_environment returns draft:null; this read does not initialize UI editing state.",
     { id, draftId: id },
     true,
     (a, signal) => client.environments.getDraft(a.id, a.draftId, { signal }),
   );
   tool(
     "update_environment_draft",
-    "Save environment fields with an expected revision. secrets and runtime_requirements replace whole lists; preserve existing entries. Read the returned revision before publishing.",
+    "Save fields on a config-owned onboarding draft with an expected revision. Direct editing-session writes are rejected: save those through the native Edit environment editor or its draft-owning chat, then read and review the exact draft before publication. secrets and runtime_requirements replace whole lists; preserve existing entries.",
     {
       id,
       draftId: id,
@@ -382,21 +382,21 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "start_task",
-    "Create a cloud thread using a published environmentConfigId and start its first turn. This consumes account usage. Retain both thread.id and turn.id.",
+    "Create an ordinary task using a published environmentConfigId and start its first turn. This is not an environment-edit initializer. Consumes account usage. Retain both thread.id and turn.id.",
     { environmentConfigId: id, prompt, cwd: id.optional(), ...turnOptions },
     false,
     (a, signal) => client.tasks.create(defined(a), { signal }),
   );
   tool(
     "start_environment_setup",
-    "Run the Cloud Environment Onboarding setup skill for an existing config. Resume its setup thread or allocate one if absent; active turns must finish first. Consumes account usage. Retain thread.id and turn.id for history and follow-ups; review its draft and publish separately to activate it.",
+    "Run the onboarding setup skill in the config's owning setup thread, allocating one only if absent. This does not create a new editing session for a published environment. Active turns must finish first. Consumes account usage. Retain thread.id and turn.id; review the saved onboarding draft and publish separately.",
     { environmentConfigId: id, name: id.optional(), ...turnOptions },
     false,
     (a, signal) => client.tasks.setupEnvironment(defined(a), { signal }),
   );
   tool(
     "follow_up_task",
-    "Resume a cloud thread and start a new turn in its retained environment. This consumes account usage. For an active turn use steer_task instead.",
+    "Resume a cloud thread and start a new turn in its retained environment. For environment edits, use the original native editing thread and instruct the agent to verify its draft ID before saving. This does not initialize native UI editing state. Consumes account usage. For an active turn use steer_task instead.",
     { threadId: id, prompt, ...turnOptions },
     false,
     (a, signal) => client.tasks.followUp(defined(a), { signal }),
