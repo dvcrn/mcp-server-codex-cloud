@@ -322,7 +322,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
 
   tool(
     "delete_personal_secrets",
-    "Delete personal vault entries by IDs from list_secret_metadata in the specified namespace. Returns deleted IDs and names only. Stops on failure and reports confirmed deletions; list metadata before retrying. The provisional delete route returned HTTP 404 in live tests; deletion is not verified.",
+    "Delete personal vault entries by IDs from list_secret_metadata in the specified namespace. Returns deleted IDs and names only. Stops on failure and reports confirmed deletions; list metadata before retrying.",
     {
       namespace: z.enum(["not_sensitive", "sensitive"]),
       ids: z.array(id).min(1).max(100),

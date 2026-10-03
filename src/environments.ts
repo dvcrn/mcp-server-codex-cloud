@@ -445,9 +445,9 @@ export class EnvironmentsApi {
     for (const entry of requestedEntries) {
       const { id } = entry;
       try {
-        await this.http.request(`/v1/personal-secrets/${segment(id)}`, {
+        await this.http.request("/v1/personal-secrets", {
           method: "DELETE",
-          query: { namespace },
+          body: { namespace, ids: [id] },
           signal: options.signal,
         });
       } catch (error) {

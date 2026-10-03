@@ -325,12 +325,15 @@ test.each(["not_sensitive", "sensitive"] as const)(
         const headers = new Headers(init?.headers);
         expect(headers.get("authorization")).toBe("Bearer access");
         expect(headers.get("ChatGPT-Account-ID")).toBe("account");
-        expect(parsed.searchParams.get("namespace")).toBe(namespace);
         if (init?.method === "DELETE") {
+          expect(parsed.search).toBe("");
+          expect(headers.get("content-type")).toBe("application/json");
+          expect(JSON.parse(String(init.body)).namespace).toBe(namespace);
           return requests.length === 3
             ? new Response(null, { status: 204 })
             : Response.json({ ...second, value: "delete-response-value" });
         }
+        expect(parsed.searchParams.get("namespace")).toBe(namespace);
         return Response.json(
           parsed.searchParams.has("cursor")
             ? {
@@ -360,13 +363,19 @@ test.each(["not_sensitive", "sensitive"] as const)(
     expect(new URL(requests[1]?.url ?? "").searchParams.get("cursor")).toBe(
       "page/2",
     );
-    expect(new URL(requests[2]?.url ?? "").pathname).toBe(
-      "/v1/personal-secrets/user-owner~assec_second%2Fopaque",
+    expect(requests.slice(2).map(({ url }) => url)).toEqual([
+      "https://codex-cloud-backend.chatgpt.com/v1/personal-secrets",
+      "https://codex-cloud-backend.chatgpt.com/v1/personal-secrets",
+    ]);
+    expect(requests.slice(0, 2).every(({ body }) => body === undefined)).toBe(
+      true,
     );
-    expect(new URL(requests[3]?.url ?? "").pathname).toBe(
-      "/v1/personal-secrets/user-owner~assec_first",
-    );
-    expect(requests.every(({ body }) => body === undefined)).toBe(true);
+    expect(
+      requests.slice(2).map(({ body }) => JSON.parse(String(body))),
+    ).toEqual([
+      { namespace, ids: [second.id] },
+      { namespace, ids: [first.id] },
+    ]);
   },
 );
 
@@ -423,11 +432,11 @@ test.each(["rejection", "lost response"])(
     const deleted: string[] = [];
     const client = new CodexCloudClient({
       tokens: { accessToken: "access" },
-      fetch: async (url, init) => {
+      fetch: async (_url, init) => {
         if (init?.method !== "DELETE") {
           return Response.json({ secrets: entries });
         }
-        const id = new URL(String(url)).pathname.split("/").at(-1) ?? "";
+        const id = JSON.parse(String(init.body)).ids[0];
         deleted.push(id);
         if (id === "two") {
           if (failure === "lost response") {

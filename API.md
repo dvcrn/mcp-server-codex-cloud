@@ -92,9 +92,9 @@ entry is deleted. Duplicate IDs are deleted once. Deletions stop on the first
 failure and the error reports prior confirmed deletions. List metadata before
 retrying because the failed request may have reached the backend.
 
-The provisional delete route is `DELETE /v1/personal-secrets/{id}?namespace=...`,
-with no request body. Live calls returned HTTP 404 for both test namespaces;
-metadata confirmed that neither entry was deleted. This route is not ready for use.
+The delete route is `DELETE /v1/personal-secrets` with a JSON body containing
+`{ namespace, ids }`. The SDK sends one ID per request so confirmed progress
+can be reported when a later deletion fails.
 
 Shared values use `createValue({ namespace, name, value })`. Use `runtime` for
 variables or `proxy` for network secrets. Each call returns a new value reference;
