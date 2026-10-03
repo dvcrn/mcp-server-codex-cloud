@@ -93,7 +93,8 @@ failure and the error reports prior confirmed deletions. List metadata before
 retrying because the failed request may have reached the backend.
 
 The provisional delete route is `DELETE /v1/personal-secrets/{id}?namespace=...`,
-with no request body. Backend support still needs live verification.
+with no request body. Live calls returned HTTP 404 for both test namespaces;
+metadata confirmed that neither entry was deleted. This route is not ready for use.
 
 Shared values use `createValue({ namespace, name, value })`. Use `runtime` for
 variables or `proxy` for network secrets. Each call returns a new value reference;
@@ -177,6 +178,10 @@ best-effort after the first turn starts; a naming failure still returns the
 thread and turn IDs. An explicit name skips the config metadata lookup.
 `rename(threadId, name)` changes a stored thread's title without resuming its
 environment and returns its metadata with the confirmed name.
+`archive(threadId)` rejects an active thread, sends `thread/archive` without
+resuming its environment, and returns `{ threadId, archived: true }` after
+backend acknowledgement. Archived tasks are excluded from `list()`; `get()`
+can still read their metadata without an explicit archived flag.
 
 `steer({ threadId, expectedTurnId, prompt })` adds input to an active turn.
 `cancel(threadId, turnId)` requests interruption and returns

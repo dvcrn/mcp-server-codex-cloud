@@ -430,3 +430,63 @@ test("rename reads metadata once and does not require a loadable environment or 
     client.close();
   }
 });
+
+test("archive targets a stored idle thread without resuming its environment", async () => {
+  const reads: string[] = [];
+  const socket = new FakeSocket((request, current) => {
+    if (
+      request.method === "initialize"
+      || request.method === "thread/archive"
+    ) {
+      current.reply(request, {});
+    } else if (request.method !== "initialized") {
+      throw new Error(`Unexpected method: ${request.method}`);
+    }
+  });
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (url) => {
+      reads.push(String(url));
+      return Response.json({
+        thread: { id: "thread", status: { type: "idle" } },
+      });
+    },
+    socketFactory: async () => socket,
+  });
+  try {
+    expect(await client.tasks.archive("thread")).toEqual({
+      threadId: "thread",
+      archived: true,
+    });
+    expect(reads).toEqual([
+      "https://codex-cloud-backend.chatgpt.com/v1/threads/thread",
+    ]);
+    expect(
+      socket.sent.filter((request) => request.method !== "initialize"),
+    ).toEqual([
+      { method: "initialized" },
+      { id: 2, method: "thread/archive", params: { threadId: "thread" } },
+    ]);
+  } finally {
+    client.close();
+  }
+});
+
+test("archive rejects an active thread before opening the cloud socket", async () => {
+  let opened = false;
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async () =>
+      Response.json({ thread: { id: "thread", status: { type: "active" } } }),
+    socketFactory: async () => {
+      opened = true;
+      throw new Error("Unexpected socket connection");
+    },
+  });
+  try {
+    await expect(client.tasks.archive("thread")).rejects.toThrow("active turn");
+    expect(opened).toBe(false);
+  } finally {
+    client.close();
+  }
+});

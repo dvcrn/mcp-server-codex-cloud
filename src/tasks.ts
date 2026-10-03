@@ -170,6 +170,21 @@ export class TasksApi {
     return { ...thread, name };
   }
 
+  /** Archives a stored idle thread without resuming its environment. */
+  public async archive(
+    threadId: string,
+    options: RequestOptions = {},
+  ): Promise<{ threadId: string; archived: true }> {
+    const thread = await this.get(threadId, options);
+    if (thread.status?.type === "active") {
+      throw new CodexCloudError(
+        "Thread has an active turn; interrupt it or wait for completion before archiving",
+      );
+    }
+    await this.rpc.request("thread/archive", { threadId }, options);
+    return { threadId, archived: true };
+  }
+
   /** Resumes an existing thread and starts a follow-up turn using its retained environment. */
   public async followUp(
     input: FollowUpTaskInput,

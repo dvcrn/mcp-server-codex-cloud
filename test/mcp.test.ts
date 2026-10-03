@@ -350,3 +350,62 @@ test("MCP personal vault deletion validates inputs, declares mutation, and retur
     await close();
   }
 });
+
+test("MCP archive validates IDs and reports only acknowledged mutations", async () => {
+  let rejectArchive = false;
+  const socket = new FakeSocket((request, current) => {
+    if (request.method === "initialize") {
+      current.reply(request, {});
+    } else if (request.method === "thread/archive") {
+      if (rejectArchive) {
+        current.emit({
+          id: request.id,
+          error: { code: -32000, message: "private backend details" },
+        });
+      } else {
+        current.reply(request, {});
+      }
+    }
+  });
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "private" },
+    fetch: async () =>
+      Response.json({ thread: { id: "thread", status: { type: "idle" } } }),
+    socketFactory: async () => socket,
+  });
+  const { client, close } = await connect(sdk);
+  try {
+    const tool = (await client.listTools()).tools.find(
+      ({ name }) => name === "archive_task",
+    );
+    expect(tool?.annotations?.readOnlyHint).toBe(false);
+    expect(tool?.annotations?.destructiveHint).toBe(true);
+    expect(
+      (
+        await client.callTool({
+          name: "archive_task",
+          arguments: { threadId: " " },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(socket.sent).toEqual([]);
+    const success = await client.callTool({
+      name: "archive_task",
+      arguments: { threadId: "thread" },
+    });
+    expect(success.isError).not.toBe(true);
+    expect(success.content).toEqual([
+      { type: "text", text: '{"threadId":"thread","archived":true}' },
+    ]);
+    rejectArchive = true;
+    const failure = await client.callTool({
+      name: "archive_task",
+      arguments: { threadId: "thread" },
+    });
+    expect(failure.isError).toBe(true);
+    expect(JSON.stringify(failure)).not.toContain("archived");
+    expect(JSON.stringify(failure)).not.toContain("private");
+  } finally {
+    await close();
+  }
+});
