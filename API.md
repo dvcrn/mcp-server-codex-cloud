@@ -65,10 +65,25 @@ and an explicit Git ref.
 `publish()` performs begin, wait, complete, and published-config readback. For
 long-running publication, use `beginPublish()`, `getOperation()` or
 `waitForOperation()`, and `completePublish()` separately. Retain the idempotency
-key and operation ID across retries. Errors after `beginPublish()` include the
+key, operation ID, and returned `draft_scope` across retries. Pass `draft_scope`
+as `options.draftScope` to `completePublish()` (or `draftScope` to the MCP tool). Errors after `beginPublish()` include the
 operation ID. An operation timeout leaves publication
 pending; it does not cancel it. Draft conflicts surface as HTTP errors and are
-not automatically retried.
+not automatically retried. A completion failure can occur after the version
+has changed; inspect the config before retrying rather than beginning a new
+publication.
+
+`getDraft()` first reads the explicit editing-session route. If that returns
+404, it reads the config and accepts its draft only when the ID matches exactly.
+`openDraft()` returns the existing config draft's runtime and thread when its
+base is the current version. Onboarding publication uses the singular
+`/draft/approve/begin` and `/draft/approve/complete` routes. Completion sends
+only `operation_id`; the backend selects the config's owning setup thread.
+A successful operation can consume the config draft before completion, so keep
+the scope returned by begin. With that scope, `threadId` can be omitted for
+onboarding. Editing-session drafts still require it. If supplied for onboarding,
+it must match the config's `thread_id`. Older callers without retained scope can
+complete a consumed config draft using that owning thread ID.
 
 Other environment methods are `get()`, `rename()`, `getVpn()`, and
 `listSecrets()`. Secret listing returns metadata. `updateDraft()` can change
@@ -143,7 +158,30 @@ Cloud Environment Onboarding setup skill. It returns the setup thread and first
 turn. Read progress and continue the same conversation with the normal task
 history and follow-up methods. Setup can inspect the repository, install tools,
 and prepare a draft for review. Review and publish that draft to activate it.
-Do not treat `start_onboarding` on config creation as this setup-task workflow.
+`start_onboarding: true` runs that workflow automatically and returns a
+`setup_task` with the durable setup thread and turn.
+`setupEnvironment()` resumes an existing config `thread_id`, or allocates a
+setup thread if none exists. It rejects an active turn before sending input.
+If setup fails after creation, the error retains the config ID for recovery.
+
+### MCP onboarding workflow
+
+1. Call `create_environment` with `start_onboarding: true`. Retain `id` and
+   `setup_task.thread.id` / `setup_task.turn.id`; inspect progress with
+   `list_task_turns` or `wait_for_task`. For a config created without onboarding,
+   call `start_environment_setup` with its `environmentConfigId`.
+2. Once setup finishes, read `get_environment`. Review its `draft` through
+   `get_environment_draft` using the returned `draft.id`.
+3. Call `begin_environment_publish` with that ID, the reviewed draft's
+   `revision` as `expectedRevision`, and a new UUID `idempotencyKey`.
+4. Keep the returned operation ID and `draft_scope`. Poll
+   `wait_for_environment_operation` with the same operation ID after a timeout.
+5. When the operation is `SUCCEEDED`, call `complete_environment_publish` with
+   the config ID, original draft ID, operation ID, and `draftScope`. An explicit
+   editing session also needs the `threadId` returned by `open_environment_draft`.
+6. Confirm `get_environment` reports the expected published scripts and ready
+   version. If completion errors, inspect that state before retrying. Do not
+   start another publication just because completion's response was lost.
 
 ## Tasks and follow-ups
 
@@ -175,7 +213,9 @@ thread's selected environment and accept the same model options.
 `setupEnvironment({ environmentConfigId, name? })` starts onboarding with a
 thread name defaulting to `Environment setup: <environment name>`. Naming is
 best-effort after the first turn starts; a naming failure still returns the
-thread and turn IDs. An explicit name skips the config metadata lookup.
+thread and turn IDs. Naming applies only to newly allocated threads; resuming
+an existing setup keeps its title. An explicit name still reads the config to
+find any existing setup thread.
 `rename(threadId, name)` changes a stored thread's title without resuming its
 environment and returns its metadata with the confirmed name.
 `archive(threadId)` rejects an active thread, sends `thread/archive` without

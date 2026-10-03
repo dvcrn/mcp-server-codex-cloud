@@ -70,7 +70,6 @@ export class CodexCloudClient {
         ? {}
         : { userAgent: options.userAgent }),
     });
-    this.environments = new EnvironmentsApi(http);
     const socketUrl = new URL(http.baseUrl);
     socketUrl.protocol = "wss:";
     this.#rpc = new RpcClient({
@@ -87,6 +86,7 @@ export class CodexCloudClient {
         : { timeoutMs: options.rpcTimeoutMs }),
     });
     this.tasks = new TasksApi(http, this.#rpc);
+    this.environments = new EnvironmentsApi(http, this.tasks);
   }
 
   /** Loads credentials from the selected Codex auth file. */

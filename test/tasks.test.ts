@@ -360,7 +360,10 @@ for (const outcome of [
       tokens: { accessToken: "access" },
       fetch: async () => {
         fetches++;
-        throw new Error("HTTP unavailable");
+        if (fetches > 1) {
+          throw new Error("Unexpected post-turn HTTP request");
+        }
+        return Response.json({ name: "Example" });
       },
       socketFactory: async () => socket,
     });
@@ -369,7 +372,7 @@ for (const outcome of [
         { environmentConfigId: "config", name: "Custom setup" },
         { signal: controller.signal },
       );
-      expect(fetches).toBe(0);
+      expect(fetches).toBe(1);
       expect(task.turn.id).toBe("turn");
       expect(task.thread.id).toBe("thread");
       expect(task.thread.name).toBe(
@@ -548,3 +551,153 @@ test("restore rejects a response for another thread", async () => {
     client.close();
   }
 });
+
+for (const active of [false, true]) {
+  test(`setup reuses its existing thread and ${active ? "rejects an active turn" : "starts the onboarding skill"}`, async () => {
+    const socket = new FakeSocket((request, current) => {
+      if (request.method === "initialize") {
+        current.reply(request, {});
+      }
+      if (request.method === "thread/resume") {
+        current.reply(request, {
+          thread: {
+            id: "existing",
+            status: { type: active ? "active" : "idle" },
+          },
+        });
+      }
+      if (request.method === "turn/start") {
+        current.reply(request, {
+          turn: { id: "setup-turn", status: "inProgress", items: [] },
+        });
+      }
+    });
+    const client = new CodexCloudClient({
+      tokens: { accessToken: "access" },
+      fetch: async () =>
+        Response.json({ name: "Example", thread_id: "existing" }),
+      socketFactory: async () => socket,
+    });
+    try {
+      const task = client.tasks.setupEnvironment({
+        environmentConfigId: "config",
+        name: "Custom",
+        model: "model",
+        effort: "high",
+      });
+      if (active) {
+        await expect(task).rejects.toThrow("active turn");
+        expect(
+          socket.sent.some((request) => request.method === "turn/start"),
+        ).toBe(false);
+      } else {
+        expect((await task).turn.id).toBe("setup-turn");
+        expect(
+          socket.sent.find((request) => request.method === "turn/start")
+            ?.params,
+        ).toMatchObject({
+          threadId: "existing",
+          model: "model",
+          effort: "high",
+          input: [
+            {
+              type: "text",
+              text: "Use $cloud-environment-onboarding:setup to set up this cloud environment",
+            },
+          ],
+        });
+      }
+      expect(
+        socket.sent.some((request) => request.method === "thread/start"),
+      ).toBe(false);
+    } finally {
+      client.close();
+    }
+  });
+}
+
+for (const failTurn of [false, true]) {
+  test(`create with onboarding ${failTurn ? "retains its config after a turn failure" : "uses the durable setup flow"}`, async () => {
+    const bodies: unknown[] = [];
+    const socket = new FakeSocket((request, current) => {
+      if (
+        request.method === "initialize"
+        || request.method === "thread/name/set"
+      ) {
+        current.reply(request, {});
+      }
+      if (request.method === "thread/start") {
+        current.reply(request, {
+          thread: {
+            id: "setup-thread",
+            status: { type: "idle" },
+            environments: [
+              { environmentId: "runtime", environmentConfigId: "new-config" },
+            ],
+          },
+        });
+      }
+      if (request.method === "turn/start") {
+        if (failTurn) {
+          current.emit({
+            id: request.id,
+            error: { code: -32000, message: "failed" },
+          });
+        } else {
+          current.reply(request, {
+            turn: { id: "setup-turn", status: "inProgress", items: [] },
+          });
+        }
+      }
+    });
+    const client = new CodexCloudClient({
+      tokens: { accessToken: "access" },
+      fetch: async (_url, init) => {
+        if (init?.method === "POST") {
+          bodies.push(JSON.parse(String(init.body)));
+        }
+        return Response.json({ id: "new-config", name: "Example" });
+      },
+      socketFactory: async () => socket,
+    });
+    try {
+      const created = client.environments.create({
+        name: "Example",
+        repositories: [],
+        start_onboarding: true,
+      });
+      if (failTurn) {
+        await expect(created).rejects.toThrow("config new-config was created");
+      } else {
+        const result = await created;
+        expect(result.thread_id).toBe("setup-thread");
+        expect(result.environment_id).toBe("runtime");
+        expect(result.setup_task?.turn.id).toBe("setup-turn");
+      }
+      expect(bodies).toHaveLength(1);
+      expect(bodies[0]).toMatchObject({ start_onboarding: false });
+      expect(
+        socket.sent.find((r) => r.method === "thread/start")?.params,
+      ).toMatchObject({
+        environments: [{ onboardingConfigId: "new-config" }],
+        serviceName: "codex_cloud",
+        threadSource: "user",
+        deferredEnvironment: true,
+        pluginsMcp: { productSku: "codex" },
+      });
+      expect(
+        socket.sent.find((r) => r.method === "turn/start")?.params,
+      ).toMatchObject({
+        threadId: "setup-thread",
+        input: [
+          {
+            type: "text",
+            text: "Use $cloud-environment-onboarding:setup to set up this cloud environment",
+          },
+        ],
+      });
+    } finally {
+      client.close();
+    }
+  });
+}
