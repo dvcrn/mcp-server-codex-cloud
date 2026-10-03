@@ -4,6 +4,7 @@ import type { RpcNotification } from "../src/cloud-types.js";
 import { FakeSocket } from "./fake-socket.js";
 
 function setup() {
+  let name: string | null = null;
   const socket = new FakeSocket((request, current) => {
     if (request.method === "initialize") {
       current.reply(request, {});
@@ -24,12 +25,28 @@ function setup() {
     if (request.method === "turn/steer") {
       current.reply(request, { turnId: "turn" });
     }
+    if (request.method === "thread/name/set") {
+      name = String(request.params?.name);
+      current.reply(request, {});
+    }
     if (request.method === "turn/interrupt") {
       current.reply(request, {});
     }
   });
   const client = new CodexCloudClient({
     tokens: { accessToken: "access" },
+    fetch: async (url) =>
+      Response.json(
+        String(url).includes("environment-configs")
+          ? { name: "Example" }
+          : {
+              thread: {
+                id: "thread",
+                name,
+                status: { type: "active" },
+              },
+            },
+      ),
     socketFactory: async () => socket,
   });
   return { socket, client };
@@ -48,6 +65,8 @@ test("new task selects the config and starts input on the returned thread", asyn
       socket.sent.find((x) => x.method === "thread/start")?.params,
     ).toEqual({
       environments: [{ environmentConfigId: "config" }],
+      serviceName: "codex_cloud",
+      threadSource: "user",
       deferredEnvironment: true,
       pluginsMcp: { productSku: "codex" },
     });
@@ -247,6 +266,10 @@ test("environment setup selects durable onboarding and invokes the setup skill",
     const task = await client.tasks.setupEnvironment({
       environmentConfigId: "config",
     });
+    expect(task.thread.name).toBe("Environment setup: Example");
+    expect(
+      socket.sent.find((x) => x.method === "thread/name/set")?.params,
+    ).toEqual({ threadId: "thread", name: "Environment setup: Example" });
     expect(task.thread.id).toBe("thread");
     expect(task.turn.id).toBe("turn");
     expect(
@@ -268,6 +291,141 @@ test("environment setup selects durable onboarding and invokes the setup skill",
         },
       ],
     });
+  } finally {
+    client.close();
+  }
+});
+
+test("rename rejects empty names and names stored threads without resuming", async () => {
+  const { client, socket } = setup();
+  try {
+    await expect(client.tasks.rename("thread", " ")).rejects.toThrow("empty");
+    expect(socket.sent).toHaveLength(0);
+    const renamed = await client.tasks.rename("thread", "Custom title");
+    expect(renamed.name).toBe("Custom title");
+    expect(socket.sent.map((x) => x.method)).toEqual([
+      "initialize",
+      "initialized",
+      "thread/name/set",
+    ]);
+    expect(socket.sent.at(-1)?.params).toEqual({
+      threadId: "thread",
+      name: "Custom title",
+    });
+  } finally {
+    client.close();
+  }
+});
+
+for (const outcome of [
+  "success",
+  "rejected",
+  "disconnected",
+  "aborted",
+] as const) {
+  test(`setup keeps its started turn when naming is ${outcome} and never fetches post-turn metadata`, async () => {
+    const controller = new AbortController();
+    const socket = new FakeSocket((request, current) => {
+      if (request.method === "initialize") {
+        current.reply(request, {});
+      }
+      if (request.method === "thread/start") {
+        current.reply(request, {
+          thread: { id: "thread", name: null, status: { type: "idle" } },
+        });
+      }
+      if (request.method === "turn/start") {
+        current.reply(request, {
+          turn: { id: "turn", status: "inProgress", items: [] },
+        });
+        if (outcome === "aborted") {
+          controller.abort();
+        }
+      }
+      if (request.method === "thread/name/set") {
+        if (outcome === "rejected") {
+          current.emit({
+            id: request.id,
+            error: { code: -32601, message: "Unsupported naming" },
+          });
+        } else if (outcome === "disconnected") {
+          current.close();
+        } else {
+          current.reply(request, {});
+        }
+      }
+    });
+    let fetches = 0;
+    const client = new CodexCloudClient({
+      tokens: { accessToken: "access" },
+      fetch: async () => {
+        fetches++;
+        throw new Error("HTTP unavailable");
+      },
+      socketFactory: async () => socket,
+    });
+    try {
+      const task = await client.tasks.setupEnvironment(
+        { environmentConfigId: "config", name: "Custom setup" },
+        { signal: controller.signal },
+      );
+      expect(fetches).toBe(0);
+      expect(task.turn.id).toBe("turn");
+      expect(task.thread.id).toBe("thread");
+      expect(task.thread.name).toBe(
+        outcome === "success" ? "Custom setup" : null,
+      );
+      const methods = socket.sent.map((x) => x.method);
+      if (outcome !== "aborted") {
+        expect(methods.indexOf("turn/start")).toBeLessThan(
+          methods.indexOf("thread/name/set"),
+        );
+      }
+    } finally {
+      client.close();
+    }
+  });
+}
+
+test("rename reads metadata once and does not require a loadable environment or post-rename GET", async () => {
+  const socket = new FakeSocket((request, current) => {
+    if (request.method === "initialize") {
+      current.reply(request, {});
+    }
+    if (request.method === "thread/resume") {
+      current.emit({
+        id: request.id,
+        error: { code: -32004, message: "Environment expired" },
+      });
+    }
+    if (request.method === "thread/name/set") {
+      current.reply(request, {});
+    }
+  });
+  let reads = 0;
+  const thread = {
+    id: "thread",
+    name: "Old",
+    status: { type: "idle" },
+    preview: "Retained preview",
+  };
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async () => {
+      if (++reads > 1) {
+        throw new Error("Post-rename GET unavailable");
+      }
+      return Response.json({ thread });
+    },
+    socketFactory: async () => socket,
+  });
+  try {
+    expect(await client.tasks.rename("thread", "New")).toEqual({
+      ...thread,
+      name: "New",
+    });
+    expect(reads).toBe(1);
+    expect(socket.sent.some((x) => x.method === "thread/resume")).toBe(false);
   } finally {
     client.close();
   }

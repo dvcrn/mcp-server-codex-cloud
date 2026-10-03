@@ -45,6 +45,7 @@ test("MCP exposes config publication and thread tools with new input contracts",
       "begin_environment_publish",
       "complete_environment_publish",
       "start_task",
+      "rename_task",
       "follow_up_task",
       "steer_task",
       "cancel_task",
@@ -256,6 +257,48 @@ test("vault tools validate creation and preserve omitted values without exposing
         { source: "user_provided", optional: true },
       ],
     });
+  } finally {
+    await close();
+  }
+});
+
+test("setup allocation rejection supplies recovery guidance without leaking backend details", async () => {
+  const socket = new FakeSocket((request, current) => {
+    if (request.method === "initialize") {
+      current.reply(request, {});
+    }
+    if (request.method === "thread/start") {
+      current.emit({
+        id: request.id,
+        error: { code: -32004, message: "private backend reason" },
+      });
+    }
+  });
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async () =>
+      Response.json({ name: "Already set up", thread_id: "existing" }),
+    socketFactory: async () => socket,
+  });
+  const { client, close } = await connect(sdk);
+  try {
+    const result = await client.callTool({
+      name: "start_environment_setup",
+      arguments: { environmentConfigId: "config" },
+    });
+    expect(result.isError).toBe(true);
+    const text = JSON.stringify(result.content);
+    expect(text).toContain("rejected setup thread allocation");
+    expect(text).toContain("follow_up_task");
+    expect(text).not.toContain("private backend reason");
+    expect(
+      socket.sent.some(
+        (x) => x.method === "thread/name/set" || x.method === "turn/start",
+      ),
+    ).toBe(false);
+    expect(socket.sent.filter((x) => x.method === "thread/start")).toHaveLength(
+      1,
+    );
   } finally {
     await close();
   }

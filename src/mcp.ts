@@ -7,6 +7,7 @@ import {
   ApiError,
   AuthenticationError,
   CodexCloudError,
+  RpcError,
   TokenRefreshError,
 } from "./errors.js";
 
@@ -340,6 +341,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     (a, signal) => client.tasks.get(a.threadId, { signal }),
   );
   tool(
+    "rename_task",
+    "Rename a cloud task thread and return its persisted metadata.",
+    { threadId: id, name: id },
+    false,
+    (a, signal) => client.tasks.rename(a.threadId, a.name, { signal }),
+  );
+  tool(
     "start_task",
     "Create a cloud thread using a published environmentConfigId and start its first turn. This consumes account usage. Retain both thread.id and turn.id.",
     { environmentConfigId: id, prompt, cwd: id.optional(), ...turnOptions },
@@ -349,7 +357,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   tool(
     "start_environment_setup",
     "Start the Cloud Environment Onboarding setup skill in a durable cloud thread for an existing config. Creates a setup task and consumes account usage. Retain thread.id and turn.id for history and follow-ups; review its draft and publish separately to activate it.",
-    { environmentConfigId: id, ...turnOptions },
+    { environmentConfigId: id, name: id.optional(), ...turnOptions },
     false,
     (a, signal) => client.tasks.setupEnvironment(defined(a), { signal }),
   );
@@ -472,6 +480,13 @@ function toolError(error: unknown, name: string): string {
     && error.name === "TimeoutError"
   ) {
     return "Timed out waiting for the task. Poll list_task_turns or wait_for_task with the same thread and turn IDs.";
+  }
+  if (
+    name === "start_environment_setup"
+    && error instanceof RpcError
+    && error.code === -32004
+  ) {
+    return "Codex Cloud rejected setup thread allocation (RPC -32004) before returning a thread ID. Use get_environment to inspect the config's existing thread_id and draft. Continue an existing setup with follow_up_task, or test initial onboarding on a new config. Check list_tasks before retrying. No naming request or setup turn was sent.";
   }
   if (error instanceof ApiError) {
     if (

@@ -153,10 +153,20 @@ const followUp = await client.tasks.followUp({
 console.log(followUp.turn.id);
 ```
 
+New task and setup threads use the Codex Cloud service and user thread source.
+Follow-ups resume their existing thread and preserve its origin.
+
 Tasks use cloud thread IDs and turn IDs. Config IDs and runtime environment IDs
 are separate identifiers. Create accepts a published `environmentConfigId` and
 optional `cwd`, `model`, `effort`, and `serviceTier`. Follow-ups preserve the
 thread's selected environment and accept the same model options.
+
+`setupEnvironment({ environmentConfigId, name? })` starts onboarding with a
+thread name defaulting to `Environment setup: <environment name>`. Naming is
+best-effort after the first turn starts; a naming failure still returns the
+thread and turn IDs. An explicit name skips the config metadata lookup.
+`rename(threadId, name)` changes a stored thread's title without resuming its
+environment and returns its metadata with the confirmed name.
 
 `steer({ threadId, expectedTurnId, prompt })` adds input to an active turn.
 `cancel(threadId, turnId)` requests interruption and returns
