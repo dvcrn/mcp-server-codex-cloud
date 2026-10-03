@@ -74,14 +74,18 @@ export class TasksApi {
     if (input.name !== undefined && !input.name.trim()) {
       throw new CodexCloudError("Thread name must not be empty");
     }
-    const environment = await this.http.request<CloudEnvironment>(
-      `/v1/environment-configs/${segment(input.environmentConfigId)}`,
-      options,
-    );
+    let name = input.name;
+    if (name === undefined) {
+      const environment = await this.http.request<CloudEnvironment>(
+        `/v1/environment-configs/${segment(input.environmentConfigId)}`,
+        options,
+      );
+      name = `Environment setup: ${environment.name}`;
+    }
     return this.#create(
       {
         ...input,
-        name: input.name ?? `Environment setup: ${environment.name}`,
+        name,
         prompt:
           "Use $cloud-environment-onboarding:setup to set up this cloud environment",
       },
@@ -123,35 +127,36 @@ export class TasksApi {
         "Cloud thread creation returned no thread ID; list threads before retrying",
       );
     }
+    let turn: Turn;
     try {
-      if (input.name !== undefined) {
-        await this.rpc.request(
-          "thread/name/set",
-          { threadId: response.thread.id, name: input.name },
-          options,
-        );
-      }
-      const turn = await this.#startTurn(
+      turn = await this.#startTurn(
         { ...input, threadId: response.thread.id },
         options,
       );
-      return {
-        thread:
-          input.name === undefined
-            ? response.thread
-            : await this.get(response.thread.id, options),
-        turn,
-      };
     } catch (error) {
       // Allocation succeeded even if starting the first turn has an unknown outcome.
       throw new CodexCloudError(
-        `Thread ${response.thread.id} was created, but naming or starting its first turn failed, or its result was lost. Read its turns before retrying.`,
+        `Thread ${response.thread.id} was created, but its first turn failed or its result was lost. Read its turns before retrying.`,
         { cause: error },
       );
     }
+    let thread = response.thread;
+    if (input.name !== undefined) {
+      try {
+        await this.rpc.request(
+          "thread/name/set",
+          { threadId: thread.id, name: input.name },
+          options,
+        );
+        thread = { ...thread, name: input.name };
+      } catch {
+        // Cosmetic naming failure must not hide a successfully started turn.
+      }
+    }
+    return { thread, turn };
   }
 
-  /** Renames an existing cloud thread and returns its persisted metadata. */
+  /** Renames a stored cloud thread without loading its retained environment. */
   public async rename(
     threadId: string,
     name: string,
@@ -160,9 +165,9 @@ export class TasksApi {
     if (!name.trim()) {
       throw new CodexCloudError("Thread name must not be empty");
     }
-    await this.resume(threadId, options);
+    const thread = await this.get(threadId, options);
     await this.rpc.request("thread/name/set", { threadId, name }, options);
-    return this.get(threadId, options);
+    return { ...thread, name };
   }
 
   /** Resumes an existing thread and starts a follow-up turn using its retained environment. */

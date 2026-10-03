@@ -162,8 +162,11 @@ optional `cwd`, `model`, `effort`, and `serviceTier`. Follow-ups preserve the
 thread's selected environment and accept the same model options.
 
 `setupEnvironment({ environmentConfigId, name? })` starts onboarding with a
-thread name defaulting to `Environment setup: <environment name>`.
-`rename(threadId, name)` changes a thread's title and returns its metadata.
+thread name defaulting to `Environment setup: <environment name>`. Naming is
+best-effort after the first turn starts; a naming failure still returns the
+thread and turn IDs. An explicit name skips the config metadata lookup.
+`rename(threadId, name)` changes a stored thread's title without resuming its
+environment and returns its metadata with the confirmed name.
 
 `steer({ threadId, expectedTurnId, prompt })` adds input to an active turn.
 `cancel(threadId, turnId)` requests interruption and returns
