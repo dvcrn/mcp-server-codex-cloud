@@ -82,7 +82,7 @@ test("MCP exposes config publication and thread tools with new input contracts",
     expect(requests[0]?.url).toEndWith(
       "/v1/environment-configs/config/drafts/draft",
     );
-    expect(requests[0]?.body).toEqual({
+    expect(requests[1]?.body).toEqual({
       base_version_id: "version",
       expected_revision: 1,
       install_script: "echo ready",
@@ -166,6 +166,9 @@ test("vault tools validate creation and preserve omitted values without exposing
   const sdk = new CodexCloudClient({
     tokens: { accessToken: "private" },
     fetch: async (url, init) => {
+      if (init?.method === "GET") {
+        return Response.json({ id: "config" });
+      }
       requests.push(JSON.parse(String(init?.body)));
       const entry = {
         id: "entry",
@@ -277,8 +280,7 @@ test("setup allocation rejection supplies recovery guidance without leaking back
   });
   const sdk = new CodexCloudClient({
     tokens: { accessToken: "access" },
-    fetch: async () =>
-      Response.json({ name: "Already set up", thread_id: "existing" }),
+    fetch: async () => Response.json({ name: "Example" }),
     socketFactory: async () => socket,
   });
   const { client, close } = await connect(sdk);
@@ -410,3 +412,54 @@ test("MCP archive validates IDs and reports only acknowledged mutations", async 
     await close();
   }
 });
+
+for (const completionStatus of [200, 500]) {
+  test(`MCP onboarding completion without threadId handles HTTP ${completionStatus}`, async () => {
+    const writes: unknown[] = [];
+    const sdk = new CodexCloudClient({
+      tokens: { accessToken: "private" },
+      fetch: async (url, init) => {
+        const path = new URL(String(url)).pathname;
+        if (path.includes("environment-operations")) {
+          return Response.json({ id: "operation", state: "SUCCEEDED" });
+        }
+        if (path.includes("/drafts/")) {
+          return Response.json({}, { status: 404 });
+        }
+        if (path.endsWith("/draft/approve/complete")) {
+          writes.push(JSON.parse(String(init?.body)));
+          return Response.json(
+            { error: "private-backend-detail" },
+            { status: completionStatus },
+          );
+        }
+        return Response.json({
+          id: "config",
+          thread_id: "owner",
+          draft: { id: "draft" },
+          version_id: "published",
+        });
+      },
+    });
+    const { client, close } = await connect(sdk);
+    try {
+      const result = await client.callTool({
+        name: "complete_environment_publish",
+        arguments: { id: "config", draftId: "draft", operationId: "operation" },
+      });
+      expect(writes).toEqual([{ operation_id: "operation" }]);
+      const text = JSON.stringify(result.content);
+      expect(text).not.toContain("private-backend-detail");
+      if (completionStatus === 500) {
+        expect(result.isError).toBe(true);
+        expect(text).toContain("operation operation");
+        expect(text).toContain("may already be published");
+      } else {
+        expect(result.isError).not.toBe(true);
+        expect(text).toContain("published");
+      }
+    } finally {
+      await close();
+    }
+  });
+}

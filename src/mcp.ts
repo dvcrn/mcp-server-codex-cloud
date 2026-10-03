@@ -151,14 +151,14 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "get_environment",
-    "Read a published config and any returned draft metadata.",
+    "Read a published config and its pending draft. Use the returned draft.id directly with get_environment_draft and begin_environment_publish.",
     { id },
     true,
     (a, signal) => client.environments.get(a.id, { signal }),
   );
   tool(
     "create_environment",
-    "Create a cloud config with repository refs. Resolve numeric GitHub repository IDs first. Open a draft to edit scripts and publish it before starting tasks.",
+    "Create a cloud config with repository refs. Resolve numeric GitHub repository IDs first. start_onboarding starts the onboarding skill in a durable setup thread and returns setup_task with thread and turn IDs. Review and publish the draft before starting tasks.",
     {
       name: id,
       repositories: z.array(repositoryRef),
@@ -178,14 +178,14 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "open_environment_draft",
-    "Open an editing draft and return draft_id, environment_id, and thread_id. Keep these IDs for saving and publishing.",
+    "Return the existing pending config draft and its runtime, or open a new editing draft. Keep draft_id, environment_id, and thread_id for saving and publishing.",
     { id },
     false,
     (a, signal) => client.environments.openDraft(a.id, { signal }),
   );
   tool(
     "get_environment_draft",
-    "Read an explicit editing draft and its base version and revision.",
+    "Read an editing-session or onboarding draft and its base version and revision.",
     { id, draftId: id },
     true,
     (a, signal) => client.environments.getDraft(a.id, a.draftId, { signal }),
@@ -226,7 +226,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "begin_environment_publish",
-    "Begin publication. Supply a UUID idempotencyKey and retain the returned operation ID for polling and completion; a timeout does not mean publication failed.",
+    "Begin publication. Supply a UUID idempotencyKey and retain the returned operation ID and draft_scope for polling and completion; a timeout does not mean publication failed.",
     {
       id,
       draftId: id,
@@ -266,8 +266,14 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "complete_environment_publish",
-    "Complete a succeeded publication operation using the editing thread ID, then read back the published config.",
-    { id, draftId: id, operationId: id, threadId: id },
+    "Complete a succeeded publication, then read back the config. Pass draftScope from begin's draft_scope because publication can remove the draft. Editing-session drafts require threadId; onboarding drafts use the config owner automatically. A completion error may occur after publication; inspect the config before retrying.",
+    {
+      id,
+      draftId: id,
+      operationId: id,
+      threadId: id.optional(),
+      draftScope: z.enum(["config", "editing_session"]).optional(),
+    },
     false,
     async (a, signal) => {
       const operation = await client.environments.getOperation(a.operationId, {
@@ -281,7 +287,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
         a.draftId,
         a.operationId,
         a.threadId,
-        { signal },
+        { signal, ...(a.draftScope ? { draftScope: a.draftScope } : {}) },
       );
       return client.environments.get(a.id, { signal });
     },
@@ -383,7 +389,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "start_environment_setup",
-    "Start the Cloud Environment Onboarding setup skill in a durable cloud thread for an existing config. Creates a setup task and consumes account usage. Retain thread.id and turn.id for history and follow-ups; review its draft and publish separately to activate it.",
+    "Run the Cloud Environment Onboarding setup skill for an existing config. Resume its setup thread or allocate one if absent; active turns must finish first. Consumes account usage. Retain thread.id and turn.id for history and follow-ups; review its draft and publish separately to activate it.",
     { environmentConfigId: id, name: id.optional(), ...turnOptions },
     false,
     (a, signal) => client.tasks.setupEnvironment(defined(a), { signal }),

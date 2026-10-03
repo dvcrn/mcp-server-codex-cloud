@@ -14,7 +14,8 @@ test("config create and draft save use versioned routes, refs, and revision guar
       });
       return Response.json({
         id: "config",
-        draft: { id: "draft", revision: 2 },
+        version_id: "version",
+        draft: { id: "draft", revision: 2, base_version_id: "older-version" },
       });
     },
   });
@@ -45,9 +46,15 @@ test("config create and draft save use versioned routes, refs, and revision guar
         start_onboarding: false,
       },
     },
+    { path: "/v1/environment-configs/config", method: "GET", body: undefined },
     {
       path: "/v1/environment-configs/config/drafts",
       method: "POST",
+      body: undefined,
+    },
+    {
+      path: "/v1/environment-configs/config/drafts/draft",
+      method: "GET",
       body: undefined,
     },
     {
@@ -103,17 +110,19 @@ test("publication completes only after operation success then reads back config"
     "published-version",
   );
   expect(requests.map((x) => x.path)).toEqual([
+    "/v1/environment-configs/config/drafts/draft",
     "/v1/environment-configs/config/drafts/draft/approve/begin",
     "/v1/environment-operations/operation",
     "/v1/environment-operations/operation",
+    "/v1/environment-configs/config/drafts/draft",
     "/v1/environment-configs/config/drafts/draft/approve/complete",
     "/v1/environment-configs/config",
   ]);
-  expect(requests[0]?.body).toEqual({
+  expect(requests[1]?.body).toEqual({
     expected_revision: 2,
     idempotency_key: "retry-key",
   });
-  expect(requests[3]?.body).toEqual({
+  expect(requests[5]?.body).toEqual({
     operation_id: "operation",
     thread_id: "editing-thread",
   });
@@ -142,8 +151,16 @@ test("draft conflict is surfaced without automatic retry or lost revision guard"
   let calls = 0;
   const client = new CodexCloudClient({
     tokens: { accessToken: "access" },
-    fetch: async () => {
+    fetch: async (_url, init) => {
       calls++;
+      if (init?.method === "GET") {
+        return Response.json({ id: "config", draft: { id: "draft" } });
+      }
+      expect(init?.method).toBe("PATCH");
+      expect(JSON.parse(String(init?.body))).toEqual({
+        base_version_id: "base",
+        expected_revision: 0,
+      });
       return Response.json({ error: { message: "conflict" } }, { status: 409 });
     },
   });
@@ -153,7 +170,7 @@ test("draft conflict is surfaced without automatic retry or lost revision guard"
       expected_revision: 0,
     }),
   ).rejects.toThrow("HTTP 409");
-  expect(calls).toBe(1);
+  expect(calls).toBe(2);
 });
 
 test("config pagination preserves snake case and opaque IDs are URL encoded", async () => {
@@ -190,7 +207,7 @@ test("personal vault writes distinguish create, replacement, and metadata-only u
     fetch: async (url, init) => {
       requests.push({
         path: new URL(String(url)).pathname,
-        body: JSON.parse(String(init?.body)),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
       });
       return Response.json({
         secrets: [{ id: "entry", name: "KEY", value: "must-not-return" }],
@@ -245,7 +262,7 @@ test("shared values return references and attach through revision-guarded drafts
     fetch: async (url, init) => {
       requests.push({
         path: new URL(String(url)).pathname,
-        body: JSON.parse(String(init?.body)),
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
       });
       return Response.json({
         id: "value",
@@ -301,6 +318,7 @@ test("shared values return references and attach through revision-guarded drafts
       path: "/v1/environment-values",
       body: { namespace: "proxy", name: "NETWORK", value: "dummy" },
     },
+    { path: "/v1/environment-configs/config/drafts/draft", body: undefined },
     { path: "/v1/environment-configs/config/drafts/draft", body: update },
   ]);
 });

@@ -74,20 +74,24 @@ export class TasksApi {
     if (input.name !== undefined && !input.name.trim()) {
       throw new CodexCloudError("Thread name must not be empty");
     }
-    let name = input.name;
-    if (name === undefined) {
-      const environment = await this.http.request<CloudEnvironment>(
-        `/v1/environment-configs/${segment(input.environmentConfigId)}`,
+    const environment = await this.http.request<CloudEnvironment>(
+      `/v1/environment-configs/${segment(input.environmentConfigId)}`,
+      options,
+    );
+    const prompt =
+      "Use $cloud-environment-onboarding:setup to set up this cloud environment";
+    if (environment.thread_id) {
+      return this.followUp(
+        { ...input, threadId: environment.thread_id, prompt },
         options,
       );
-      name = `Environment setup: ${environment.name}`;
     }
+    const name = input.name ?? `Environment setup: ${environment.name}`;
     return this.#create(
       {
         ...input,
         name,
-        prompt:
-          "Use $cloud-environment-onboarding:setup to set up this cloud environment",
+        prompt,
       },
       { onboardingConfigId: input.environmentConfigId },
       options,

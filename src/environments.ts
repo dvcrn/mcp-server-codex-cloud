@@ -3,6 +3,7 @@ import type { PageOptions, RequestOptions } from "./cloud-types.js";
 import { ApiError, CodexCloudError } from "./errors.js";
 import type { HttpClient } from "./http.js";
 import { segment } from "./internal.js";
+import type { CreatedTask, TasksApi } from "./tasks.js";
 
 export type RepositoryId = `github-${string}`;
 
@@ -94,12 +95,16 @@ export interface EnvironmentPage {
   next_cursor?: string | null;
 }
 
+export interface CreatedEnvironment extends CloudEnvironment {
+  setup_task?: CreatedTask;
+}
+
 export interface CreateEnvironmentInput {
   name: string;
   repositories: EnvironmentRepository[];
   network_policy?: NetworkPolicy;
   share_settings?: "private" | "workspace";
-  /** Whether config creation requests backend onboarding. @default false */
+  /** Whether to start the onboarding skill in a durable setup thread. @default false */
   start_onboarding?: boolean;
 }
 
@@ -122,17 +127,27 @@ export interface EditingRuntime {
   thread_id: string;
 }
 
+export type EnvironmentDraftScope = "config" | "editing_session";
+
+export interface CompletePublishOptions extends RequestOptions {
+  draftScope?: EnvironmentDraftScope;
+}
+
 export interface EnvironmentOperation {
   id: string;
   kind: string;
   state: string;
+  draft_scope?: EnvironmentDraftScope;
   environment_id?: string;
   error?: unknown;
   [key: string]: unknown;
 }
 
 export class EnvironmentsApi {
-  public constructor(private readonly http: HttpClient) {}
+  public constructor(
+    private readonly http: HttpClient,
+    private readonly tasks?: TasksApi,
+  ) {}
 
   /** Lists persistent environment configs using the backend pagination envelope. */
   public list(
@@ -160,11 +175,16 @@ export class EnvironmentsApi {
     return this.http.request(`/v1/environment-configs/${segment(id)}`, options);
   }
 
-  /** Creates a persistent config with repository refs and network policy. */
-  public create(
+  /** Creates a persistent config and optionally starts a durable onboarding turn. */
+  public async create(
     input: CreateEnvironmentInput,
     options: RequestOptions = {},
-  ): Promise<CloudEnvironment> {
+  ): Promise<CreatedEnvironment> {
+    if (input.start_onboarding && !this.tasks) {
+      throw new CodexCloudError(
+        "Onboarding requires the task API; create environments through CodexCloudClient",
+      );
+    }
     if (!input.name.trim()) {
       throw new CodexCloudError("Environment name must not be empty");
     }
@@ -174,20 +194,45 @@ export class EnvironmentsApi {
         throw new CodexCloudError("Repository ref must not be empty");
       }
     }
-    return this.http.request("/v1/environment-configs", {
-      method: "POST",
-      body: {
-        ...input,
-        network_policy: input.network_policy ?? {
-          type: "restricted",
-          presets: ["package_managers"],
-          egress_rules: [],
+    const config = await this.http.request<CloudEnvironment>(
+      "/v1/environment-configs",
+      {
+        method: "POST",
+        body: {
+          ...input,
+          network_policy: input.network_policy ?? {
+            type: "restricted",
+            presets: ["package_managers"],
+            egress_rules: [],
+          },
+          share_settings: input.share_settings ?? "private",
+          // Use durable thread/start to retain the setup thread's config association.
+          start_onboarding: false,
         },
-        share_settings: input.share_settings ?? "private",
-        start_onboarding: input.start_onboarding ?? false,
+        signal: options.signal,
       },
-      signal: options.signal,
-    });
+    );
+    if (!input.start_onboarding || !this.tasks) {
+      return config;
+    }
+    try {
+      const task = await this.tasks.setupEnvironment(
+        { environmentConfigId: config.id },
+        options,
+      );
+      const runtimeId = task.thread.environments?.[0]?.environmentId;
+      return {
+        ...config,
+        thread_id: task.thread.id,
+        ...(runtimeId ? { environment_id: runtimeId } : {}),
+        setup_task: task,
+      };
+    } catch (error) {
+      throw new CodexCloudError(
+        `Environment config ${config.id} was created, but setup did not finish locally. Inspect get_environment and its thread's turns before retrying setup; do not recreate the config.`,
+        { cause: error },
+      );
+    }
   }
 
   /** Renames the config without changing its published scripts. */
@@ -206,52 +251,108 @@ export class EnvironmentsApi {
     });
   }
 
-  /** Opens an editing draft and returns its runtime and conversation IDs. */
-  public openDraft(
+  /** Returns a pending config draft's runtime, or opens a new editing session. */
+  public async openDraft(
     id: string,
     options: RequestOptions = {},
   ): Promise<EditingRuntime> {
+    const config = await this.get(id, options);
+    if (config.draft && config.draft.base_version_id === config.version_id) {
+      if (!config.thread_id || !config.environment_id) {
+        throw new CodexCloudError(
+          "The config has a pending draft but no editing runtime; inspect get_environment before opening another draft",
+        );
+      }
+      return {
+        draft_id: config.draft.id,
+        thread_id: config.thread_id,
+        environment_id: config.environment_id,
+      };
+    }
     return this.http.request(`/v1/environment-configs/${segment(id)}/drafts`, {
       method: "POST",
       signal: options.signal,
     });
   }
 
-  /** Reads an explicit draft together with the published config. */
-  public getDraft(
+  /** Reads an editing-session draft or the matching onboarding draft on its config. */
+  public async getDraft(
     id: string,
     draftId: string,
     options: RequestOptions = {},
   ): Promise<CloudEnvironment> {
-    return this.http.request(
-      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}`,
-      options,
-    );
+    return (await this.#resolveDraft(id, draftId, options)).config;
+  }
+
+  async #resolveDraft(
+    id: string,
+    draftId: string,
+    options: RequestOptions,
+    publishedThreadId?: string,
+  ) {
+    const explicitPath =
+      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}` as const;
+    try {
+      const config = await this.http.request<CloudEnvironment>(
+        explicitPath,
+        options,
+      );
+      return { config, path: explicitPath, configDraft: false };
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error;
+      }
+      const config = await this.get(id, options);
+      // Successful config publication removes its draft before completion.
+      const publishedOwner =
+        !config.draft
+        && publishedThreadId !== undefined
+        && config.thread_id === publishedThreadId;
+      if (config.draft?.id !== draftId && !publishedOwner) {
+        throw error;
+      }
+      return {
+        config,
+        path: `/v1/environment-configs/${segment(id)}/draft` as const,
+        configDraft: true,
+      };
+    }
   }
 
   /** Saves draft changes guarded by the base version and expected revision. */
-  public updateDraft(
+  public async updateDraft(
     id: string,
     draftId: string,
     input: UpdateDraftInput,
     options: RequestOptions = {},
   ): Promise<CloudEnvironment> {
-    return this.http.request(
-      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}`,
-      { method: "PATCH", body: input, signal: options.signal },
-    );
+    const draft = await this.#resolveDraft(id, draftId, options);
+    return this.http.request(draft.path, {
+      method: "PATCH",
+      body: input,
+      signal: options.signal,
+    });
   }
 
   /** Begins asynchronous publication with a caller-reusable idempotency key. */
-  public beginPublish(
+  public async beginPublish(
     id: string,
     draftId: string,
     expectedRevision: number,
     idempotencyKey: string,
     options: RequestOptions = {},
   ): Promise<EnvironmentOperation> {
-    return this.http.request(
-      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}/approve/begin`,
+    const draft = await this.#resolveDraft(id, draftId, options);
+    if (
+      draft.configDraft
+      && draft.config.draft?.revision !== expectedRevision
+    ) {
+      throw new CodexCloudError(
+        "Draft revision changed; read the draft before publishing",
+      );
+    }
+    const operation = await this.http.request<EnvironmentOperation>(
+      `${draft.path}/approve/begin`,
       {
         method: "POST",
         body: {
@@ -261,6 +362,10 @@ export class EnvironmentsApi {
         signal: options.signal,
       },
     );
+    return {
+      ...operation,
+      draft_scope: draft.configDraft ? "config" : "editing_session",
+    };
   }
 
   /** Reads the state of a publication operation. */
@@ -297,22 +402,57 @@ export class EnvironmentsApi {
     }
   }
 
-  /** Completes an approved operation using the draft's editing thread. */
-  public completePublish(
+  /** Completes an approved config draft, or an editing-session draft with its thread ID. */
+  public async completePublish(
     id: string,
     draftId: string,
     operationId: string,
-    threadId: string,
-    options: RequestOptions = {},
+    threadId?: string,
+    options: CompletePublishOptions = {},
   ): Promise<CloudEnvironment> {
-    return this.http.request(
-      `/v1/environment-configs/${segment(id)}/drafts/${segment(draftId)}/approve/complete`,
-      {
-        method: "POST",
-        body: { operation_id: operationId, thread_id: threadId },
-        signal: options.signal,
-      },
-    );
+    const configPath = `/v1/environment-configs/${segment(id)}` as const;
+    const explicitPath = `${configPath}/drafts/${segment(draftId)}` as const;
+    const draft =
+      options.draftScope === "editing_session"
+        ? { path: explicitPath, configDraft: false, config: undefined }
+        : options.draftScope === "config"
+          ? {
+              path: `${configPath}/draft` as const,
+              configDraft: true,
+              config: await this.get(id, options),
+            }
+          : await this.#resolveDraft(id, draftId, options, threadId);
+    if (
+      draft.configDraft
+      && threadId !== undefined
+      && draft.config?.thread_id !== threadId
+    ) {
+      throw new CodexCloudError(
+        "Onboarding publication requires the config's thread_id; read get_environment before completing",
+      );
+    }
+    if (!draft.configDraft && !threadId) {
+      throw new CodexCloudError(
+        "Editing-session publication requires its thread_id",
+      );
+    }
+    try {
+      return await this.http.request<CloudEnvironment>(
+        `${draft.path}/approve/complete`,
+        {
+          method: "POST",
+          body: draft.configDraft
+            ? { operation_id: operationId }
+            : { operation_id: operationId, thread_id: threadId },
+          signal: options.signal,
+        },
+      );
+    } catch (error) {
+      throw new CodexCloudError(
+        `Completion of publication operation ${operationId} was not confirmed. The version may already be published; inspect get_environment and this operation before retrying.`,
+        { cause: error },
+      );
+    }
   }
 
   /** Publishes a draft through begin, poll, and complete, preserving caller retry identity. */
@@ -322,7 +462,7 @@ export class EnvironmentsApi {
     input: {
       expectedRevision: number;
       idempotencyKey: string;
-      threadId: string;
+      threadId?: string;
     },
     options: RequestOptions & { timeoutMs?: number } = {},
   ): Promise<CloudEnvironment> {
@@ -335,13 +475,10 @@ export class EnvironmentsApi {
     );
     try {
       await this.waitForOperation(operation.id, options);
-      await this.completePublish(
-        id,
-        draftId,
-        operation.id,
-        input.threadId,
-        options,
-      );
+      await this.completePublish(id, draftId, operation.id, input.threadId, {
+        ...options,
+        ...(operation.draft_scope ? { draftScope: operation.draft_scope } : {}),
+      });
       return await this.get(id, options);
     } catch (error) {
       throw new CodexCloudError(
