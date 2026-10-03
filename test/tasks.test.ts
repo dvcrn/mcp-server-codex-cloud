@@ -24,12 +24,28 @@ function setup() {
     if (request.method === "turn/steer") {
       current.reply(request, { turnId: "turn" });
     }
-    if (request.method === "turn/interrupt") {
+    if (
+      request.method === "turn/interrupt"
+      || request.method === "thread/name/set"
+    ) {
       current.reply(request, {});
     }
   });
   const client = new CodexCloudClient({
     tokens: { accessToken: "access" },
+    fetch: async (url) =>
+      Response.json(
+        String(url).includes("environment-configs")
+          ? { name: "Example" }
+          : {
+              thread: {
+                id: "thread",
+                name: "Environment setup: Example",
+                preview: "setup",
+                status: { type: "active" },
+              },
+            },
+      ),
     socketFactory: async () => socket,
   });
   return { socket, client };
@@ -247,6 +263,10 @@ test("environment setup selects durable onboarding and invokes the setup skill",
     const task = await client.tasks.setupEnvironment({
       environmentConfigId: "config",
     });
+    expect(task.thread.name).toBe("Environment setup: Example");
+    expect(
+      socket.sent.find((x) => x.method === "thread/name/set")?.params,
+    ).toEqual({ threadId: "thread", name: "Environment setup: Example" });
     expect(task.thread.id).toBe("thread");
     expect(task.turn.id).toBe("turn");
     expect(
@@ -267,6 +287,27 @@ test("environment setup selects durable onboarding and invokes the setup skill",
           text_elements: [],
         },
       ],
+    });
+  } finally {
+    client.close();
+  }
+});
+
+test("rename rejects empty names before resuming and persists through the naming RPC", async () => {
+  const { client, socket } = setup();
+  try {
+    await expect(client.tasks.rename("thread", " ")).rejects.toThrow("empty");
+    expect(socket.sent).toHaveLength(0);
+    await client.tasks.rename("thread", "Custom title");
+    expect(socket.sent.map((x) => x.method)).toEqual([
+      "initialize",
+      "initialized",
+      "thread/resume",
+      "thread/name/set",
+    ]);
+    expect(socket.sent.at(-1)?.params).toEqual({
+      threadId: "thread",
+      name: "Custom title",
     });
   } finally {
     client.close();

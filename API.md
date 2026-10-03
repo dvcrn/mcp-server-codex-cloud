@@ -158,6 +158,10 @@ are separate identifiers. Create accepts a published `environmentConfigId` and
 optional `cwd`, `model`, `effort`, and `serviceTier`. Follow-ups preserve the
 thread's selected environment and accept the same model options.
 
+`setupEnvironment({ environmentConfigId, name? })` starts onboarding with a
+thread name defaulting to `Environment setup: <environment name>`.
+`rename(threadId, name)` changes a thread's title and returns its metadata.
+
 `steer({ threadId, expectedTurnId, prompt })` adds input to an active turn.
 `cancel(threadId, turnId)` requests interruption and returns
 `interruptRequested: true`; confirm `interrupted` status through turn history.

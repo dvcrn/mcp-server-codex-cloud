@@ -9,6 +9,7 @@ import type {
   ThreadItem,
   Turn,
 } from "./cloud-types.js";
+import type { CloudEnvironment } from "./environments.js";
 import { CodexCloudError } from "./errors.js";
 import type { HttpClient } from "./http.js";
 import { segment } from "./internal.js";
@@ -70,9 +71,17 @@ export class TasksApi {
     input: SetupEnvironmentInput,
     options: RequestOptions = {},
   ): Promise<CreatedTask> {
+    if (input.name !== undefined && !input.name.trim()) {
+      throw new CodexCloudError("Thread name must not be empty");
+    }
+    const environment = await this.http.request<CloudEnvironment>(
+      `/v1/environment-configs/${segment(input.environmentConfigId)}`,
+      options,
+    );
     return this.#create(
       {
         ...input,
+        name: input.name ?? `Environment setup: ${environment.name}`,
         prompt:
           "Use $cloud-environment-onboarding:setup to set up this cloud environment",
       },
@@ -82,7 +91,7 @@ export class TasksApi {
   }
 
   async #create(
-    input: Omit<CreateTaskInput, "environmentConfigId">,
+    input: Omit<CreateTaskInput, "environmentConfigId"> & { name?: string },
     environment:
       | { environmentConfigId: string; cwd?: string }
       | { onboardingConfigId: string },
@@ -116,18 +125,45 @@ export class TasksApi {
       );
     }
     try {
+      if (input.name !== undefined) {
+        await this.rpc.request(
+          "thread/name/set",
+          { threadId: response.thread.id, name: input.name },
+          options,
+        );
+      }
       const turn = await this.#startTurn(
         { ...input, threadId: response.thread.id },
         options,
       );
-      return { thread: response.thread, turn };
+      return {
+        thread:
+          input.name === undefined
+            ? response.thread
+            : await this.get(response.thread.id, options),
+        turn,
+      };
     } catch (error) {
       // Allocation succeeded even if starting the first turn has an unknown outcome.
       throw new CodexCloudError(
-        `Thread ${response.thread.id} was created, but its first turn failed or its result was lost. Read its turns before retrying.`,
+        `Thread ${response.thread.id} was created, but naming or starting its first turn failed, or its result was lost. Read its turns before retrying.`,
         { cause: error },
       );
     }
+  }
+
+  /** Renames an existing cloud thread and returns its persisted metadata. */
+  public async rename(
+    threadId: string,
+    name: string,
+    options: RequestOptions = {},
+  ): Promise<Thread> {
+    if (!name.trim()) {
+      throw new CodexCloudError("Thread name must not be empty");
+    }
+    await this.resume(threadId, options);
+    await this.rpc.request("thread/name/set", { threadId, name }, options);
+    return this.get(threadId, options);
   }
 
   /** Resumes an existing thread and starts a follow-up turn using its retained environment. */

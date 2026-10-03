@@ -340,6 +340,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     (a, signal) => client.tasks.get(a.threadId, { signal }),
   );
   tool(
+    "rename_task",
+    "Rename a cloud task thread and return its persisted metadata.",
+    { threadId: id, name: id },
+    false,
+    (a, signal) => client.tasks.rename(a.threadId, a.name, { signal }),
+  );
+  tool(
     "start_task",
     "Create a cloud thread using a published environmentConfigId and start its first turn. This consumes account usage. Retain both thread.id and turn.id.",
     { environmentConfigId: id, prompt, cwd: id.optional(), ...turnOptions },
@@ -349,7 +356,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   tool(
     "start_environment_setup",
     "Start the Cloud Environment Onboarding setup skill in a durable cloud thread for an existing config. Creates a setup task and consumes account usage. Retain thread.id and turn.id for history and follow-ups; review its draft and publish separately to activate it.",
-    { environmentConfigId: id, ...turnOptions },
+    { environmentConfigId: id, name: id.optional(), ...turnOptions },
     false,
     (a, signal) => client.tasks.setupEnvironment(defined(a), { signal }),
   );

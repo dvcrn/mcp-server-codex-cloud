@@ -61,6 +61,7 @@ as its argument.
 | --- | --- |
 | Start agent-driven environment setup | `create_environment`, `start_environment_setup` |
 | Find configs | `list_environments`, `get_environment` |
+| Rename task threads | `rename_task` |
 | Create and rename configs | `create_environment`, `rename_environment` |
 | Edit scripts, start skill, repository refs, and network policy | `open_environment_draft`, `get_environment_draft`, `update_environment_draft` |
 | Publish drafts | `begin_environment_publish`, `get_environment_operation`, `wait_for_environment_operation`, `complete_environment_publish` |

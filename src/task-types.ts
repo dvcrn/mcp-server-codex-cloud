@@ -23,6 +23,7 @@ export interface FollowUpTaskInput {
 }
 
 export interface SetupEnvironmentInput {
+  name?: string;
   environmentConfigId: string;
   model?: string;
   effort?: string;
