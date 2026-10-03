@@ -54,7 +54,12 @@ await client.connect(
 try {
   const tools = await client.listTools();
   assert(tools.tools.length >= 25);
-  for (const name of ["follow_up_task", "list_task_turns", "list_task_items"]) {
+  for (const name of [
+    "follow_up_task",
+    "list_task_turns",
+    "list_task_items",
+    "rename_task",
+  ]) {
     assert(tools.tools.some((tool) => tool.name === name));
   }
   console.log(

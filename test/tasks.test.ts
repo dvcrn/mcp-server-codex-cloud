@@ -4,6 +4,7 @@ import type { RpcNotification } from "../src/cloud-types.js";
 import { FakeSocket } from "./fake-socket.js";
 
 function setup() {
+  let name: string | null = null;
   const socket = new FakeSocket((request, current) => {
     if (request.method === "initialize") {
       current.reply(request, {});
@@ -24,10 +25,11 @@ function setup() {
     if (request.method === "turn/steer") {
       current.reply(request, { turnId: "turn" });
     }
-    if (
-      request.method === "turn/interrupt"
-      || request.method === "thread/name/set"
-    ) {
+    if (request.method === "thread/name/set") {
+      name = String(request.params?.name);
+      current.reply(request, {});
+    }
+    if (request.method === "turn/interrupt") {
       current.reply(request, {});
     }
   });
@@ -40,8 +42,7 @@ function setup() {
           : {
               thread: {
                 id: "thread",
-                name: "Environment setup: Example",
-                preview: "setup",
+                name,
                 status: { type: "active" },
               },
             },
@@ -64,6 +65,8 @@ test("new task selects the config and starts input on the returned thread", asyn
       socket.sent.find((x) => x.method === "thread/start")?.params,
     ).toEqual({
       environments: [{ environmentConfigId: "config" }],
+      serviceName: "codex_cloud",
+      threadSource: "user",
       deferredEnvironment: true,
       pluginsMcp: { productSku: "codex" },
     });
@@ -298,7 +301,8 @@ test("rename rejects empty names before resuming and persists through the naming
   try {
     await expect(client.tasks.rename("thread", " ")).rejects.toThrow("empty");
     expect(socket.sent).toHaveLength(0);
-    await client.tasks.rename("thread", "Custom title");
+    const renamed = await client.tasks.rename("thread", "Custom title");
+    expect(renamed.name).toBe("Custom title");
     expect(socket.sent.map((x) => x.method)).toEqual([
       "initialize",
       "initialized",

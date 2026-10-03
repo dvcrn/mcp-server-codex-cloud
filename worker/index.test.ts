@@ -103,3 +103,36 @@ test("MCP calls upstream through VPC egress and reports upstream rejection", asy
   expect(body).not.toContain("upstream detail");
   expect(egressFetch).toHaveBeenCalledTimes(1);
 });
+
+test("Worker tools/list advertises task renaming and optional setup names", async () => {
+  const { env, request } = fixture();
+  const response = await worker.fetch(
+    request("/mcp", {
+      jsonrpc: "2.0",
+      id: 1,
+      method: "tools/list",
+      params: {},
+    }),
+    env,
+  );
+  expect(response.status).toBe(200);
+  const body = await response.text();
+  const payload = JSON.parse(
+    response.headers.get("content-type")?.includes("text/event-stream")
+      ? (body
+          .split("\n")
+          .find((line) => line.startsWith("data: "))
+          ?.slice(6) ?? "{}")
+      : body,
+  );
+  const tools = payload.result.tools;
+  expect(
+    tools.find((tool: { name: string }) => tool.name === "rename_task")
+      ?.inputSchema.properties,
+  ).toHaveProperty("name");
+  expect(
+    tools.find(
+      (tool: { name: string }) => tool.name === "start_environment_setup",
+    )?.inputSchema.properties,
+  ).toHaveProperty("name");
+});

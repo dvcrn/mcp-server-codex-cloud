@@ -7,6 +7,7 @@ import {
   ApiError,
   AuthenticationError,
   CodexCloudError,
+  RpcError,
   TokenRefreshError,
 } from "./errors.js";
 
@@ -479,6 +480,13 @@ function toolError(error: unknown, name: string): string {
     && error.name === "TimeoutError"
   ) {
     return "Timed out waiting for the task. Poll list_task_turns or wait_for_task with the same thread and turn IDs.";
+  }
+  if (
+    name === "start_environment_setup"
+    && error instanceof RpcError
+    && error.code === -32004
+  ) {
+    return "Codex Cloud rejected setup thread allocation (RPC -32004) before returning a thread ID. Use get_environment to inspect the config's existing thread_id and draft. Continue an existing setup with follow_up_task, or test initial onboarding on a new config. Check list_tasks before retrying. No naming request or setup turn was sent.";
   }
   if (error instanceof ApiError) {
     if (

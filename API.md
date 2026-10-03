@@ -153,6 +153,9 @@ const followUp = await client.tasks.followUp({
 console.log(followUp.turn.id);
 ```
 
+New task and setup threads use the Codex Cloud service and user thread source.
+Follow-ups resume their existing thread and preserve its origin.
+
 Tasks use cloud thread IDs and turn IDs. Config IDs and runtime environment IDs
 are separate identifiers. Create accepts a published `environmentConfigId` and
 optional `cwd`, `model`, `effort`, and `serviceTier`. Follow-ups preserve the

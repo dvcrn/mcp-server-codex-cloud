@@ -107,9 +107,8 @@ export class TasksApi {
       "thread/start",
       {
         environments: [environment],
-        ...("onboardingConfigId" in environment
-          ? { serviceName: "codex_cloud", threadSource: "user" }
-          : {}),
+        serviceName: "codex_cloud",
+        threadSource: "user",
         deferredEnvironment: true,
         pluginsMcp: { productSku: "codex" },
         ...(input.model === undefined ? {} : { model: input.model }),
