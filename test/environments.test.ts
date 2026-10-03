@@ -304,3 +304,168 @@ test("shared values return references and attach through revision-guarded drafts
     { path: "/v1/environment-configs/config/drafts/draft", body: update },
   ]);
 });
+
+test.each(["not_sensitive", "sensitive"] as const)(
+  "personal vault deletion in %s paginates metadata, deduplicates IDs, and never returns values",
+  async (namespace) => {
+    const first = { id: "user-owner~assec_first", name: "first" };
+    const second = { id: "user-owner~assec_second/opaque", name: "second" };
+    const requests: { url: string; method: string; body: unknown }[] = [];
+    const signal = new AbortController().signal;
+    const client = new CodexCloudClient({
+      tokens: { accessToken: "access", accountId: "account" },
+      fetch: async (url, init) => {
+        const parsed = new URL(String(url));
+        requests.push({
+          url: parsed.toString(),
+          method: init?.method ?? "GET",
+          body: init?.body,
+        });
+        expect(init?.signal).toBe(signal);
+        const headers = new Headers(init?.headers);
+        expect(headers.get("authorization")).toBe("Bearer access");
+        expect(headers.get("ChatGPT-Account-ID")).toBe("account");
+        if (init?.method === "DELETE") {
+          expect(parsed.search).toBe("");
+          expect(headers.get("content-type")).toBe("application/json");
+          expect(JSON.parse(String(init.body)).namespace).toBe(namespace);
+          return requests.length === 3
+            ? new Response(null, { status: 204 })
+            : Response.json({ ...second, value: "delete-response-value" });
+        }
+        expect(parsed.searchParams.get("namespace")).toBe(namespace);
+        return Response.json(
+          parsed.searchParams.has("cursor")
+            ? {
+                secrets: [{ ...second, value: "metadata-echo-value" }],
+                next_cursor: null,
+              }
+            : {
+                secrets: [first, { id: "other", name: "untouched" }],
+                next_cursor: "page/2",
+              },
+        );
+      },
+    });
+
+    const result = await client.environments.deletePersonalSecrets(
+      namespace,
+      [second.id, first.id, second.id],
+      { signal },
+    );
+    expect(result).toEqual({ deleted: [second, first] });
+    expect(requests.map(({ method }) => method)).toEqual([
+      "GET",
+      "GET",
+      "DELETE",
+      "DELETE",
+    ]);
+    expect(new URL(requests[1]?.url ?? "").searchParams.get("cursor")).toBe(
+      "page/2",
+    );
+    expect(requests.slice(2).map(({ url }) => url)).toEqual([
+      "https://codex-cloud-backend.chatgpt.com/v1/personal-secrets",
+      "https://codex-cloud-backend.chatgpt.com/v1/personal-secrets",
+    ]);
+    expect(requests.slice(0, 2).every(({ body }) => body === undefined)).toBe(
+      true,
+    );
+    expect(
+      requests.slice(2).map(({ body }) => JSON.parse(String(body))),
+    ).toEqual([
+      { namespace, ids: [second.id] },
+      { namespace, ids: [first.id] },
+    ]);
+  },
+);
+
+test("personal vault deletion validates the whole batch before mutating", async () => {
+  const methods: string[] = [];
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (_url, init) => {
+      methods.push(init?.method ?? "GET");
+      return Response.json({
+        secrets: [{ id: "exists", name: "saved", value: "private" }],
+      });
+    },
+  });
+  await expect(
+    client.environments.deletePersonalSecrets("sensitive", []),
+  ).rejects.toThrow("at least one");
+  await expect(
+    client.environments.deletePersonalSecrets("sensitive", [" "]),
+  ).rejects.toThrow("must not be empty");
+  expect(methods).toEqual([]);
+  await expect(
+    client.environments.deletePersonalSecrets("sensitive", [
+      "exists",
+      "missing",
+    ]),
+  ).rejects.toThrow("no entries were deleted");
+  expect(methods).toEqual(["GET"]);
+});
+
+test("personal vault deletion rejects repeated pagination cursors before mutating", async () => {
+  const methods: string[] = [];
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (_url, init) => {
+      methods.push(init?.method ?? "GET");
+      return Response.json({ secrets: [], next_cursor: "same" });
+    },
+  });
+  await expect(
+    client.environments.deletePersonalSecrets("sensitive", ["missing"]),
+  ).rejects.toThrow("repeated a cursor");
+  expect(methods).toEqual(["GET", "GET"]);
+});
+
+test.each(["rejection", "lost response"])(
+  "personal vault deletion reports confirmed progress and stops after a %s",
+  async (failure) => {
+    const entries = [
+      { id: "one", name: "first" },
+      { id: "two", name: "second" },
+      { id: "three", name: "third" },
+    ];
+    const deleted: string[] = [];
+    const client = new CodexCloudClient({
+      tokens: { accessToken: "access" },
+      fetch: async (_url, init) => {
+        if (init?.method !== "DELETE") {
+          return Response.json({ secrets: entries });
+        }
+        const id = JSON.parse(String(init.body)).ids[0];
+        deleted.push(id);
+        if (id === "two") {
+          if (failure === "lost response") {
+            throw new Error("private transport details");
+          }
+          return new Response("private upstream details", { status: 500 });
+        }
+        return new Response(null, { status: 204 });
+      },
+    });
+    try {
+      await client.environments.deletePersonalSecrets(
+        "sensitive",
+        entries.map(({ id }) => id),
+      );
+      throw new Error("expected deletion to fail");
+    } catch (error) {
+      expect(error).toBeInstanceOf(Error);
+      const message = error instanceof Error ? error.message : "";
+      expect(message).toContain(
+        'Confirmed deletions: [{"id":"one","name":"first"}]',
+      );
+      expect(message).toContain("entry two could not be confirmed");
+      if (failure === "rejection") {
+        expect(message).toContain("HTTP 500");
+      }
+      expect(message).toContain("list_secret_metadata before retrying");
+      expect(message).not.toContain("private");
+    }
+    expect(deleted).toEqual(["one", "two"]);
+  },
+);

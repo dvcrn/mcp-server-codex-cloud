@@ -85,6 +85,17 @@ and `sensitive` for network secrets. Supply `name`, `env_var`, and a `target` of
 updates can omit `value` to preserve it. Results contain IDs and names only.
 The environment must also request a personal variable through a runtime requirement.
 
+`deletePersonalSecrets(namespace, ids)` deletes one or more personal vault entries
+and returns `{ deleted: [{ id, name }] }`. Names come from metadata listing;
+values are never requested. All IDs must exist in that namespace before any
+entry is deleted. Duplicate IDs are deleted once. Deletions stop on the first
+failure and the error reports prior confirmed deletions. List metadata before
+retrying because the failed request may have reached the backend.
+
+The delete route is `DELETE /v1/personal-secrets` with a JSON body containing
+`{ namespace, ids }`. The SDK sends one ID per request so confirmed progress
+can be reported when a later deletion fails.
+
 Shared values use `createValue({ namespace, name, value })`. Use `runtime` for
 variables or `proxy` for network secrets. Each call returns a new value reference;
 attach its ID to a draft and publish to apply it:
@@ -167,6 +178,12 @@ best-effort after the first turn starts; a naming failure still returns the
 thread and turn IDs. An explicit name skips the config metadata lookup.
 `rename(threadId, name)` changes a stored thread's title without resuming its
 environment and returns its metadata with the confirmed name.
+`archive(threadId)` rejects an active thread, sends `thread/archive` without
+resuming its environment, and returns `{ threadId, archived: true }` after
+backend acknowledgement. Archived tasks are excluded from `list()`; `get()`
+can still read their metadata without an explicit archived flag.
+`restore(threadId)` sends `thread/unarchive` and returns the restored thread
+metadata. Restored threads reappear in `list()`; restoring does not start a turn.
 
 `steer({ threadId, expectedTurnId, prompt })` adds input to an active turn.
 `cancel(threadId, turnId)` requests interruption and returns

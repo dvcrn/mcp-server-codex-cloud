@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { PageOptions, RequestOptions } from "./cloud-types.js";
-import { CodexCloudError } from "./errors.js";
+import { ApiError, CodexCloudError } from "./errors.js";
 import type { HttpClient } from "./http.js";
 import { segment } from "./internal.js";
 
@@ -387,6 +387,80 @@ export class EnvironmentsApi {
       { method: "POST", body: { namespace, secrets }, signal: options.signal },
     );
     return { secrets: result.secrets.map(({ id, name }) => ({ id, name })) };
+  }
+
+  /** Deletes requested personal vault entries and returns references, reporting confirmed progress on failure. */
+  public async deletePersonalSecrets(
+    namespace: PersonalSecretNamespace,
+    ids: string[],
+    options: RequestOptions = {},
+  ): Promise<{ deleted: VaultValueReference[] }> {
+    if (ids.length === 0) {
+      throw new CodexCloudError("Supply at least one personal vault entry ID");
+    }
+    const entryIds = [...new Set(ids)];
+    for (const id of entryIds) {
+      segment(id);
+    }
+
+    const entries = new Map<string, VaultValueReference>();
+    const requestedIds = new Set(entryIds);
+    const seenCursors = new Set<string>();
+    let cursor: string | undefined;
+    do {
+      const page = await this.listSecrets(namespace, {
+        ...options,
+        ...(cursor ? { cursor } : {}),
+      });
+      for (const { id, name } of page.secrets) {
+        if (requestedIds.has(id)) {
+          entries.set(id, { id, name });
+        }
+      }
+      if (entries.size === entryIds.length) {
+        break;
+      }
+      cursor = page.next_cursor ?? undefined;
+      if (cursor) {
+        if (seenCursors.has(cursor)) {
+          throw new CodexCloudError(
+            "Personal vault listing repeated a cursor; no entries were deleted",
+          );
+        }
+        seenCursors.add(cursor);
+      }
+    } while (cursor);
+
+    const requestedEntries = entryIds.map((id) => {
+      const entry = entries.get(id);
+      if (!entry) {
+        throw new CodexCloudError(
+          `Personal vault entry ${id} not found in ${namespace}; no entries were deleted`,
+        );
+      }
+      return entry;
+    });
+
+    const deleted: VaultValueReference[] = [];
+    for (const entry of requestedEntries) {
+      const { id } = entry;
+      try {
+        await this.http.request("/v1/personal-secrets", {
+          method: "DELETE",
+          body: { namespace, ids: [id] },
+          signal: options.signal,
+        });
+      } catch (error) {
+        const status =
+          error instanceof ApiError ? ` (HTTP ${error.status})` : "";
+        throw new CodexCloudError(
+          `Deletion of personal vault entry ${id} could not be confirmed${status}. Confirmed deletions: ${JSON.stringify(deleted)}. Use list_secret_metadata before retrying.`,
+          { cause: error },
+        );
+      }
+      deleted.push(entry);
+    }
+    return { deleted };
   }
 
   /** Stores an immutable shared value whose ID must be attached to an environment draft. */

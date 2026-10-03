@@ -46,6 +46,7 @@ test("MCP exposes config publication and thread tools with new input contracts",
       "complete_environment_publish",
       "start_task",
       "rename_task",
+      "restore_task",
       "follow_up_task",
       "steer_task",
       "cancel_task",
@@ -299,6 +300,112 @@ test("setup allocation rejection supplies recovery guidance without leaking back
     expect(socket.sent.filter((x) => x.method === "thread/start")).toHaveLength(
       1,
     );
+  } finally {
+    await close();
+  }
+});
+
+test("MCP personal vault deletion validates inputs, declares mutation, and returns only deleted references", async () => {
+  const methods: string[] = [];
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "private" },
+    fetch: async (_url, init) => {
+      methods.push(init?.method ?? "GET");
+      return Response.json({
+        secrets: [{ id: "entry", name: "KEY", value: "upstream-value" }],
+        value: "upstream-value",
+      });
+    },
+  });
+  const { client, close } = await connect(sdk);
+  try {
+    const tools = (await client.listTools()).tools;
+    const tool = tools.find(({ name }) => name === "delete_personal_secrets");
+    expect(tool?.annotations?.readOnlyHint).toBe(false);
+    expect(tool?.annotations?.destructiveHint).toBe(true);
+    for (const arguments_ of [
+      { namespace: "sensitive", ids: [] },
+      { namespace: "sensitive", ids: [" "] },
+      { namespace: "runtime", ids: ["entry"] },
+      { namespace: "sensitive", ids: new Array(101).fill("entry") },
+      { namespace: "sensitive", ids: ["entry"], value: "unexpected" },
+    ]) {
+      const result = await client.callTool({
+        name: "delete_personal_secrets",
+        arguments: arguments_,
+      });
+      expect(result.isError).toBe(true);
+    }
+    expect(methods).toEqual([]);
+
+    const result = await client.callTool({
+      name: "delete_personal_secrets",
+      arguments: { namespace: "sensitive", ids: ["entry"] },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.content).toEqual([
+      { type: "text", text: '{"deleted":[{"id":"entry","name":"KEY"}]}' },
+    ]);
+    expect(methods).toEqual(["GET", "DELETE"]);
+  } finally {
+    await close();
+  }
+});
+
+test("MCP archive validates IDs and reports only acknowledged mutations", async () => {
+  let rejectArchive = false;
+  const socket = new FakeSocket((request, current) => {
+    if (request.method === "initialize") {
+      current.reply(request, {});
+    } else if (request.method === "thread/archive") {
+      if (rejectArchive) {
+        current.emit({
+          id: request.id,
+          error: { code: -32000, message: "private backend details" },
+        });
+      } else {
+        current.reply(request, {});
+      }
+    }
+  });
+  const sdk = new CodexCloudClient({
+    tokens: { accessToken: "private" },
+    fetch: async () =>
+      Response.json({ thread: { id: "thread", status: { type: "idle" } } }),
+    socketFactory: async () => socket,
+  });
+  const { client, close } = await connect(sdk);
+  try {
+    const tool = (await client.listTools()).tools.find(
+      ({ name }) => name === "archive_task",
+    );
+    expect(tool?.annotations?.readOnlyHint).toBe(false);
+    expect(tool?.annotations?.destructiveHint).toBe(true);
+    expect(
+      (
+        await client.callTool({
+          name: "archive_task",
+          arguments: { threadId: " " },
+        })
+      ).isError,
+    ).toBe(true);
+    expect(socket.sent).toEqual([]);
+    const success = await client.callTool({
+      name: "archive_task",
+      arguments: { threadId: "thread" },
+    });
+    expect(success.isError).not.toBe(true);
+    expect(success.content).toEqual([
+      { type: "text", text: '{"threadId":"thread","archived":true}' },
+    ]);
+    rejectArchive = true;
+    const failure = await client.callTool({
+      name: "archive_task",
+      arguments: { threadId: "thread" },
+    });
+    expect(failure.isError).toBe(true);
+    expect(JSON.stringify(failure)).not.toContain("archived");
+    expect(JSON.stringify(failure)).not.toContain("private");
   } finally {
     await close();
   }
