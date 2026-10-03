@@ -490,3 +490,61 @@ test("archive rejects an active thread before opening the cloud socket", async (
     client.close();
   }
 });
+
+test("restore returns backend metadata without explicitly resuming a thread", async () => {
+  const restored = { id: "thread", name: "Restored", status: { type: "idle" } };
+  const socket = new FakeSocket((request, current) => {
+    if (request.method === "initialize") {
+      current.reply(request, {});
+    }
+    if (request.method === "thread/unarchive") {
+      current.reply(request, { thread: restored });
+    }
+  });
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    socketFactory: async () => socket,
+    fetch: async () => {
+      throw new Error("Unexpected HTTP request");
+    },
+  });
+  try {
+    await expect(client.tasks.restore(" ")).rejects.toThrow(
+      "must not be empty",
+    );
+    expect(socket.sent).toEqual([]);
+    expect(await client.tasks.restore("thread")).toEqual(restored);
+    expect(
+      socket.sent.filter(
+        (request) =>
+          request.method !== "initialize" && request.method !== "initialized",
+      ),
+    ).toEqual([
+      { id: 2, method: "thread/unarchive", params: { threadId: "thread" } },
+    ]);
+  } finally {
+    client.close();
+  }
+});
+
+test("restore rejects a response for another thread", async () => {
+  const socket = new FakeSocket((request, current) => {
+    if (request.method === "initialize") {
+      current.reply(request, {});
+    }
+    if (request.method === "thread/unarchive") {
+      current.reply(request, { thread: { id: "other" } });
+    }
+  });
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    socketFactory: async () => socket,
+  });
+  try {
+    await expect(client.tasks.restore("thread")).rejects.toThrow(
+      "unexpected thread ID",
+    );
+  } finally {
+    client.close();
+  }
+});

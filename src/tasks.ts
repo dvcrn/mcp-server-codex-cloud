@@ -185,6 +185,25 @@ export class TasksApi {
     return { threadId, archived: true };
   }
 
+  /** Restores an archived thread and returns its metadata. */
+  public async restore(
+    threadId: string,
+    options: RequestOptions = {},
+  ): Promise<Thread> {
+    segment(threadId);
+    const response = await this.rpc.request<{ thread: Thread }>(
+      "thread/unarchive",
+      { threadId },
+      options,
+    );
+    if (response.thread?.id !== threadId) {
+      throw new CodexCloudError(
+        "Cloud restore returned an unexpected thread ID",
+      );
+    }
+    return response.thread;
+  }
+
   /** Resumes an existing thread and starts a follow-up turn using its retained environment. */
   public async followUp(
     input: FollowUpTaskInput,

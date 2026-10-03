@@ -368,6 +368,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     (a, signal) => client.tasks.archive(a.threadId, { signal }),
   );
   tool(
+    "restore_task",
+    "Restore an archived cloud task and return its metadata.",
+    { threadId: id },
+    false,
+    (a, signal) => client.tasks.restore(a.threadId, { signal }),
+  );
+  tool(
     "start_task",
     "Create a cloud thread using a published environmentConfigId and start its first turn. This consumes account usage. Retain both thread.id and turn.id.",
     { environmentConfigId: id, prompt, cwd: id.optional(), ...turnOptions },

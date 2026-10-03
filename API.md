@@ -182,6 +182,8 @@ environment and returns its metadata with the confirmed name.
 resuming its environment, and returns `{ threadId, archived: true }` after
 backend acknowledgement. Archived tasks are excluded from `list()`; `get()`
 can still read their metadata without an explicit archived flag.
+`restore(threadId)` sends `thread/unarchive` and returns the restored thread
+metadata. Restored threads reappear in `list()`; restoring does not start a turn.
 
 `steer({ threadId, expectedTurnId, prompt })` adds input to an active turn.
 `cancel(threadId, turnId)` requests interruption and returns
