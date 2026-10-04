@@ -72,15 +72,17 @@ publication.
 `getDraft()` first reads the explicit editing-session route. If that returns
 404, it reads the config and accepts its draft only when the ID matches exactly.
 `openDraft()` returns the existing config draft's runtime and thread when its
-base is the current version. Otherwise it creates a new editing chat without
-starting an agent turn and initializes a draft from the published configuration. The thread has the native environment editor
-and Save/Publish controls. Continue agent edits with
+base is the current version. Otherwise it reuses the config's owning editor
+thread, or creates one without starting an agent turn, and initializes a draft
+from the published configuration. The thread has the native environment editor
+and Save/Publish controls. The backend rejects a second onboarding owner for an
+already initialized config, so this path reuses that owner for subsequent drafts.
+It does not allocate a new chat for each fresh draft. Continue agent edits with
 `tasks.followUp({ threadId: editing.thread_id, prompt: "..." })`; its environment
 tools read and update that same draft. Keep the original persistent config ID,
 returned runtime/thread IDs, and `draft_scope: "config"`. A stale pending draft
 must be reconciled before opening another one. If opening is unconfirmed, read
-the config and its thread before retrying. A retry after an unconfirmed thread
-allocation can create another chat.
+the config and its thread before retrying.
 
 Config-draft publication uses the singular
 `/draft/approve/begin` and `/draft/approve/complete` routes. Completion sends

@@ -283,18 +283,9 @@ export class EnvironmentsApi {
     }
     let threadId = config.thread_id;
     try {
-      if (threadId) {
-        const previous = await this.tasks.get(threadId, options);
-        if (previous.status?.type === "active") {
-          throw new CodexCloudError(
-            "The editor thread has an active turn; wait for completion before opening a draft",
-          );
-        }
-      }
-      const thread = await this.tasks.startEnvironmentEditingThread(
-        id,
-        options,
-      );
+      const thread = threadId
+        ? await this.tasks.get(threadId, options)
+        : await this.tasks.startEnvironmentEditingThread(id, options);
       threadId = thread.id;
       if (thread.status?.type === "active") {
         throw new CodexCloudError(
