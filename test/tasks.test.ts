@@ -494,6 +494,103 @@ test("archive rejects an active thread before opening the cloud socket", async (
   }
 });
 
+test("bulk archive deduplicates IDs and isolates active threads and failures", async () => {
+  const socket = new FakeSocket((request, current) => {
+    if (request.method === "initialize") {
+      current.reply(request, {});
+    } else if (request.method === "thread/archive") {
+      if (request.params?.threadId === "failed") {
+        current.emit({
+          id: request.id,
+          error: { code: -32000, message: "private details" },
+        });
+      } else {
+        current.reply(request, {});
+      }
+    }
+  });
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async (url) => {
+      const id = new URL(String(url)).pathname.split("/").at(-1);
+      return Response.json({
+        thread: { id, status: { type: id === "active" ? "active" : "idle" } },
+      });
+    },
+    socketFactory: async () => socket,
+  });
+  try {
+    expect(
+      await client.tasks.archiveMany(["ok", "active", "failed", "ok", "later"]),
+    ).toEqual({
+      results: [
+        { threadId: "ok", status: "archived" },
+        { threadId: "active", status: "skipped", reason: "active_turn" },
+        {
+          threadId: "failed",
+          status: "failed",
+          error: "Codex Cloud RPC failed (-32000)",
+        },
+        { threadId: "later", status: "archived" },
+      ],
+    });
+    expect(
+      socket.sent
+        .filter((x) => x.method === "thread/archive")
+        .map((x) => x.params?.threadId),
+    ).toEqual(["ok", "failed", "later"]);
+    await expect(client.tasks.archiveMany(["ok", " "])).rejects.toThrow(
+      "empty",
+    );
+    await expect(client.tasks.archiveMany([])).rejects.toThrow("1 and 500");
+    expect(
+      socket.sent.filter((x) => x.method === "thread/archive"),
+    ).toHaveLength(3);
+  } finally {
+    client.close();
+  }
+});
+
+test("bulk archive limits concurrent operations to five", async () => {
+  const pending: (() => void)[] = [];
+  let reads = 0;
+  const socket = new FakeSocket((request, current) => {
+    if (
+      request.method === "initialize"
+      || request.method === "thread/archive"
+    ) {
+      current.reply(request, {});
+    }
+  });
+  const client = new CodexCloudClient({
+    tokens: { accessToken: "access" },
+    fetch: async () => {
+      reads++;
+      await new Promise<void>((resolve) => pending.push(resolve));
+      return Response.json({ thread: { status: { type: "idle" } } });
+    },
+    socketFactory: async () => socket,
+  });
+  try {
+    const promise = client.tasks.archiveMany(
+      Array.from({ length: 7 }, (_, i) => String(i)),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reads).toBe(5);
+    for (const resolve of pending.splice(0)) {
+      resolve();
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(reads).toBe(7);
+    for (const resolve of pending.splice(0)) {
+      resolve();
+    }
+    expect((await promise).results).toHaveLength(7);
+  } finally {
+    client.close();
+  }
+});
+
 test("restore returns backend metadata without explicitly resuming a thread", async () => {
   const restored = { id: "thread", name: "Restored", status: { type: "idle" } };
   const socket = new FakeSocket((request, current) => {

@@ -15,6 +15,7 @@ import type { HttpClient } from "./http.js";
 import { segment } from "./internal.js";
 import type { RpcClient } from "./rpc.js";
 import type {
+  ArchiveTaskResult,
   CreatedTask,
   CreateTaskInput,
   FollowUpTaskInput,
@@ -202,14 +203,61 @@ export class TasksApi {
     threadId: string,
     options: RequestOptions = {},
   ): Promise<{ threadId: string; archived: true }> {
-    const thread = await this.get(threadId, options);
-    if (thread.status?.type === "active") {
+    const { results } = await this.archiveMany([threadId], options);
+    const [result] = results;
+    if (result?.status === "skipped") {
       throw new CodexCloudError(
         "Thread has an active turn; interrupt it or wait for completion before archiving",
       );
     }
-    await this.rpc.request("thread/archive", { threadId }, options);
+    if (result?.status === "failed") {
+      throw new CodexCloudError(result.error);
+    }
     return { threadId, archived: true };
+  }
+
+  /** Archives distinct idle threads with at most five concurrent operations and reports individual outcomes. */
+  public async archiveMany(
+    threadIds: string[],
+    options: RequestOptions = {},
+  ): Promise<{ results: ArchiveTaskResult[] }> {
+    if (threadIds.length === 0 || threadIds.length > 500) {
+      throw new CodexCloudError("Provide between 1 and 500 thread IDs");
+    }
+    for (const threadId of threadIds) {
+      segment(threadId);
+    }
+    const ids = [...new Set(threadIds)];
+    const results: ArchiveTaskResult[] = [];
+    for (let offset = 0; offset < ids.length; offset += 5) {
+      options.signal?.throwIfAborted();
+      results.push(
+        ...(await Promise.all(
+          ids
+            .slice(offset, offset + 5)
+            .map(async (threadId): Promise<ArchiveTaskResult> => {
+              try {
+                const thread = await this.get(threadId, options);
+                if (thread.status?.type === "active") {
+                  return { threadId, status: "skipped", reason: "active_turn" };
+                }
+                await this.rpc.request("thread/archive", { threadId }, options);
+                return { threadId, status: "archived" };
+              } catch (error) {
+                return {
+                  threadId,
+                  status: "failed",
+                  error:
+                    error instanceof CodexCloudError
+                      ? error.message
+                      : "Archive failed or its result was lost. Check list_tasks before retrying.",
+                };
+              }
+            }),
+        )),
+      );
+    }
+    return { results };
   }
 
   /** Restores an archived thread and returns its metadata. */

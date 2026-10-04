@@ -367,6 +367,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     (a, signal) => client.tasks.rename(a.threadId, a.name, { signal }),
   );
   tool(
+    "archive_tasks",
+    "Archive specified idle cloud tasks with bounded concurrency without resuming their environments. Duplicate IDs are processed once. Returns per-thread archived, skipped (active turn), or failed outcomes. Verify failed IDs with list_tasks before retrying uncertain results.",
+    { threadIds: z.array(id).min(1).max(500) },
+    false,
+    (a, signal) => client.tasks.archiveMany(a.threadIds, { signal }),
+  );
+  tool(
     "archive_task",
     "Archive an idle cloud task without resuming its environment. Use list_tasks to verify it is absent from active tasks before retrying an uncertain result.",
     { threadId: id },

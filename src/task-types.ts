@@ -35,6 +35,11 @@ export interface CreatedTask {
   turn: Turn;
 }
 
+export type ArchiveTaskResult =
+  | { threadId: string; status: "archived" }
+  | { threadId: string; status: "skipped"; reason: "active_turn" }
+  | { threadId: string; status: "failed"; error: string };
+
 export interface ListTurnsOptions extends PageOptions {
   sortDirection?: "asc" | "desc";
   itemsView?: "notLoaded" | "summary" | "full";

@@ -398,6 +398,30 @@ test("MCP archive validates IDs and reports only acknowledged mutations", async 
       ).isError,
     ).toBe(true);
     expect(socket.sent).toEqual([]);
+    const bulkTool = (await client.listTools()).tools.find(
+      ({ name }) => name === "archive_tasks",
+    );
+    expect(bulkTool?.annotations?.destructiveHint).toBe(true);
+    for (const threadIds of [[], [" "], new Array(501).fill("thread")]) {
+      expect(
+        (
+          await client.callTool({
+            name: "archive_tasks",
+            arguments: { threadIds },
+          })
+        ).isError,
+      ).toBe(true);
+    }
+    const bulk = await client.callTool({
+      name: "archive_tasks",
+      arguments: { threadIds: ["thread", "thread"] },
+    });
+    expect(bulk.content).toEqual([
+      {
+        type: "text",
+        text: '{"results":[{"threadId":"thread","status":"archived"}]}',
+      },
+    ]);
     const success = await client.callTool({
       name: "archive_task",
       arguments: { threadId: "thread" },
