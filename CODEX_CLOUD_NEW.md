@@ -213,13 +213,6 @@ Treat IDs as opaque. Config IDs, version IDs, runtime IDs, and thread IDs are di
 
 Observed editing sequence:
 
-This is the backend draft/publication sequence, not a complete native UI
-initialization contract. The native client also registers the edit session in
-persisted client state. REST allocation, naming, and resuming alone can leave
-the thread absent from the sidebar; a first turn can expose it without the
-environment icon or Continue editing state. See the supported
-[editing workflow](API.md#existing-environment-editing).
-
 1. Read or create a config.
 2. Create/open its editing runtime with `POST /environment-configs/{configId}/drafts`. The response contains `draft_id`, `environment_id`, and `thread_id`.
 3. Read the config plus draft using the explicit draft ID.
@@ -716,3 +709,38 @@ The SDK-created onboarding agent also saved draft configuration while investigat
 Resolved `dvcrn/kikuyo` through GitHub to repository ID `1183961938` and default branch `main`. No existing user-scope config referenced this repository. Created a private `kikuyo` config with `repositories: [{repository_id: "github-1183961938", ref: "main"}]`, the SDK default package-manager network policy, and `start_onboarding: false`, then invoked `tasks.setupEnvironment()` on the returned config ID. State was saved between mutations so an unknown setup result does not trigger duplicate config creation.
 
 Config ID: `471458c8-c98d-4154-83ff-a46a102c0282~asenvcfg_cb100b0f0cf08191991c15528e62183c`. Setup thread: `01a0f752-dc9b-7660-947e-8e5c2563709f`. Turn: `01a0f752-ec06-7563-8126-90d30b2ad18d`. HTTP readback confirmed the selected config and persisted canonical skill instruction with turn status `inProgress`. The browser independently showed the onboarding skill running and identifying Phoenix, PostgreSQL, pinned Erlang/Elixir, and Bun. The agent is preparing and validating the workflow asynchronously; it has not been reported as completed or published. This user-requested setup remains running. Private state/proof are `kikuyo-setup-state.json` and `kikuyo-onboarding-proof.png`.
+
+## Existing-environment editing investigation (2026-10-04)
+
+**Captured and probed:** an empty-body `POST /v1/environment-configs/{id}/drafts`
+allocates a draft, editing runtime, and thread. A read-only agent turn in that
+thread successfully called `cloud_environment_onboarding.read_environment_config_draft`
+and returned the exact allocated draft ID. The update tool was also available.
+The API provides real draft-editing context; a missing sidebar icon does not
+establish that it created an ordinary task runtime.
+
+**Probed:** the published config can report `draft: null` while the explicit
+`GET /v1/environment-configs/{id}/drafts/{draftId}` returns its editing-session
+draft. Retain the original config ID, draft ID, thread ID, and editing runtime;
+do not substitute the source config ID or published runtime.
+
+**User-observed:** allocating, naming, and resuming an editing thread did not
+initially make it visible in the sidebar. After its first read-only turn it
+appeared, but lacked the environment-edit icon. This remains unresolved.
+
+**Client source:** the inspected desktop client stores a separate mapping in
+`environment-setup-server-configs-v1`, keyed by thread ID, containing config,
+draft, runtime, account, and user IDs. The sidebar checks that mapping. Desktop
+writes use persisted-atom messages backed by local application state. This does
+not establish how the web client persists the association or whether a server
+API can register it. The uploaded WebSocket capture contains name/resume calls
+but no corresponding HTTP state-persistence evidence.
+
+**Captured:** native UI-created editing threads also had null `threadSource`
+and lacked `environmentConfigId`. Neither field is a reliable standalone test
+of native editing registration. Adding a title is not proof of registration.
+
+The MCP must support the editing lifecycle without requiring a UI handoff.
+Backend draft creation and publication are supported; automatic sidebar
+registration still needs an independently verified implementation. Unit tests
+of REST routing cannot establish UI visibility or classification.

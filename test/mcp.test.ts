@@ -29,13 +29,10 @@ test("MCP exposes config publication and thread tools with new input contracts",
         url: String(url),
         body: init?.body ? JSON.parse(String(init.body)) : null,
       });
-      if (String(url).endsWith("/drafts/draft")) {
-        return Response.json({}, { status: 404 });
-      }
       return Response.json(
         String(url).includes("oauth/token")
           ? { access_token: "rotated-private" }
-          : { id: "config", draft: { id: "draft" } },
+          : { id: "config" },
       );
     },
   });
@@ -91,7 +88,7 @@ test("MCP exposes config publication and thread tools with new input contracts",
     expect(requests[0]?.url).toEndWith(
       "/v1/environment-configs/config/drafts/draft",
     );
-    expect(requests[2]?.body).toEqual({
+    expect(requests[1]?.body).toEqual({
       base_version_id: "version",
       expected_revision: 1,
       install_script: "echo ready",
@@ -103,34 +100,6 @@ test("MCP exposes config publication and thread tools with new input contracts",
     });
     expect(JSON.stringify(refreshed)).not.toContain("private");
     expect(refreshed.isError).not.toBe(true);
-  } finally {
-    await close();
-  }
-});
-
-test("MCP rejects new editing allocation with native UI recovery instructions", async () => {
-  const methods: string[] = [];
-  const sdk = new CodexCloudClient({
-    tokens: { accessToken: "private" },
-    fetch: async (_url, init) => {
-      methods.push(init?.method ?? "GET");
-      return Response.json({ id: "config", version_id: "base", draft: null });
-    },
-  });
-  const { client, close } = await connect(sdk);
-  try {
-    const result = await client.callTool({
-      name: "open_environment_draft",
-      arguments: { id: "config" },
-    });
-    expect(result.isError).toBe(true);
-    expect(JSON.stringify(result.content)).toContain(
-      "Edit environment in the Codex UI",
-    );
-    expect(JSON.stringify(result.content)).toContain(
-      "No draft or thread was created",
-    );
-    expect(methods).toEqual(["GET"]);
   } finally {
     await close();
   }
@@ -203,11 +172,8 @@ test("vault tools validate creation and preserve omitted values without exposing
   const sdk = new CodexCloudClient({
     tokens: { accessToken: "private" },
     fetch: async (url, init) => {
-      if (String(url).endsWith("/drafts/draft")) {
-        return Response.json({}, { status: 404 });
-      }
       if (init?.method === "GET") {
-        return Response.json({ id: "config", draft: { id: "draft" } });
+        return Response.json({ id: "config" });
       }
       requests.push(JSON.parse(String(init?.body)));
       const entry = {

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { CodexCloudClient } from "../src/client.js";
 
 for (const draft of [null, { id: "published-draft", base_version_id: "old" }]) {
-  test(`opening an edit cannot allocate an unregistered thread with ${draft ? "a retained published draft" : "no config draft"}`, async () => {
+  test(`opening an edit allocates a separate runtime with ${draft ? "a retained published draft" : "no config draft"}`, async () => {
     const requests: { path: string; method: string }[] = [];
     const client = new CodexCloudClient({
       tokens: { accessToken: "access" },
@@ -11,6 +11,13 @@ for (const draft of [null, { id: "published-draft", base_version_id: "old" }]) {
           path: new URL(String(url)).pathname,
           method: init?.method ?? "GET",
         });
+        if (init?.method === "POST") {
+          return Response.json({
+            draft_id: "editing-draft",
+            thread_id: "editing-thread",
+            environment_id: "editing-runtime",
+          });
+        }
         return Response.json({
           id: "config",
           version_id: "published-version",
@@ -25,11 +32,14 @@ for (const draft of [null, { id: "published-draft", base_version_id: "old" }]) {
       },
     });
 
-    await expect(client.environments.openDraft("config")).rejects.toThrow(
-      "opened with Edit environment in the Codex UI",
-    );
+    expect(await client.environments.openDraft("config")).toEqual({
+      draft_id: "editing-draft",
+      thread_id: "editing-thread",
+      environment_id: "editing-runtime",
+    });
     expect(requests).toEqual([
       { path: "/v1/environment-configs/config", method: "GET" },
+      { path: "/v1/environment-configs/config/drafts", method: "POST" },
     ]);
     client.close();
   });
@@ -64,27 +74,53 @@ test("an explicit draft stays readable when the published config has no draft", 
   client.close();
 });
 
-test("direct explicit writes cannot bypass UI initialization for an invisible or generic thread", async () => {
-  const methods: string[] = [];
+test("explicit draft updates preserve the editing-session path and revision guard", async () => {
+  const requests: { path: string; method: string; body: unknown }[] = [];
   const client = new CodexCloudClient({
     tokens: { accessToken: "access" },
-    fetch: async (_url, init) => {
-      methods.push(init?.method ?? "GET");
+    fetch: async (url, init) => {
+      requests.push({
+        path: new URL(String(url)).pathname,
+        method: init?.method ?? "GET",
+        body: init?.body ? JSON.parse(String(init.body)) : null,
+      });
       return Response.json({
         id: "config",
         environment_id: "editing-runtime",
-        draft: { id: "explicit-draft", revision: 1, base_version_id: "base" },
+        draft: {
+          id: "explicit-draft",
+          revision: init?.method === "PATCH" ? 2 : 1,
+          base_version_id: "base",
+        },
       });
     },
   });
 
-  await expect(
-    client.environments.updateDraft("config", "explicit-draft", {
+  const saved = await client.environments.updateDraft(
+    "config",
+    "explicit-draft",
+    {
       base_version_id: "base",
       expected_revision: 1,
       install_script: "echo changed",
-    }),
-  ).rejects.toThrow("cannot verify native UI initialization");
-  expect(methods).toEqual(["GET"]);
+    },
+  );
+  expect(saved.draft?.revision).toBe(2);
+  expect(requests).toEqual([
+    {
+      path: "/v1/environment-configs/config/drafts/explicit-draft",
+      method: "GET",
+      body: null,
+    },
+    {
+      path: "/v1/environment-configs/config/drafts/explicit-draft",
+      method: "PATCH",
+      body: {
+        base_version_id: "base",
+        expected_revision: 1,
+        install_script: "echo changed",
+      },
+    },
+  ]);
   client.close();
 });

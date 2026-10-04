@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { CodexCloudClient } from "../src/client.js";
 import { githubRepositoryId } from "../src/environments.js";
 
-test("config creation and onboarding draft saves preserve refs and revision guards", async () => {
+test("config create and draft save use versioned routes, refs, and revision guards", async () => {
   const requests: { path: string; method: string; body: unknown }[] = [];
   const client = new CodexCloudClient({
     tokens: { accessToken: "access" },
@@ -12,9 +12,6 @@ test("config creation and onboarding draft saves preserve refs and revision guar
         method: init?.method ?? "GET",
         body: init?.body ? JSON.parse(String(init.body)) : undefined,
       });
-      if (String(url).endsWith("/drafts/draft")) {
-        return Response.json({}, { status: 404 });
-      }
       return Response.json({
         id: "config",
         version_id: "version",
@@ -26,6 +23,7 @@ test("config creation and onboarding draft saves preserve refs and revision guar
     name: "test",
     repositories: [{ repository_id: "github-123", ref: "main" }],
   });
+  await client.environments.openDraft("config");
   await client.environments.updateDraft("config", "draft", {
     base_version_id: "version",
     expected_revision: 1,
@@ -48,14 +46,19 @@ test("config creation and onboarding draft saves preserve refs and revision guar
         start_onboarding: false,
       },
     },
+    { path: "/v1/environment-configs/config", method: "GET", body: undefined },
+    {
+      path: "/v1/environment-configs/config/drafts",
+      method: "POST",
+      body: undefined,
+    },
     {
       path: "/v1/environment-configs/config/drafts/draft",
       method: "GET",
       body: undefined,
     },
-    { path: "/v1/environment-configs/config", method: "GET", body: undefined },
     {
-      path: "/v1/environment-configs/config/draft",
+      path: "/v1/environment-configs/config/drafts/draft",
       method: "PATCH",
       body: {
         base_version_id: "version",
@@ -148,11 +151,8 @@ test("draft conflict is surfaced without automatic retry or lost revision guard"
   let calls = 0;
   const client = new CodexCloudClient({
     tokens: { accessToken: "access" },
-    fetch: async (url, init) => {
+    fetch: async (_url, init) => {
       calls++;
-      if (String(url).endsWith("/drafts/draft")) {
-        return Response.json({}, { status: 404 });
-      }
       if (init?.method === "GET") {
         return Response.json({ id: "config", draft: { id: "draft" } });
       }
@@ -170,7 +170,7 @@ test("draft conflict is surfaced without automatic retry or lost revision guard"
       expected_revision: 0,
     }),
   ).rejects.toThrow("HTTP 409");
-  expect(calls).toBe(3);
+  expect(calls).toBe(2);
 });
 
 test("config pagination preserves snake case and opaque IDs are URL encoded", async () => {
@@ -264,12 +264,6 @@ test("shared values return references and attach through revision-guarded drafts
         path: new URL(String(url)).pathname,
         body: init?.body ? JSON.parse(String(init.body)) : undefined,
       });
-      if (String(url).endsWith("/drafts/draft")) {
-        return Response.json({}, { status: 404 });
-      }
-      if (String(url).endsWith("/environment-configs/config")) {
-        return Response.json({ id: "config", draft: { id: "draft" } });
-      }
       return Response.json({
         id: "value",
         name: "KEY",
@@ -325,8 +319,7 @@ test("shared values return references and attach through revision-guarded drafts
       body: { namespace: "proxy", name: "NETWORK", value: "dummy" },
     },
     { path: "/v1/environment-configs/config/drafts/draft", body: undefined },
-    { path: "/v1/environment-configs/config", body: undefined },
-    { path: "/v1/environment-configs/config/draft", body: update },
+    { path: "/v1/environment-configs/config/drafts/draft", body: update },
   ]);
 });
 

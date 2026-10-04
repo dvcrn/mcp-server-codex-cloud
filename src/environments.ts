@@ -251,7 +251,7 @@ export class EnvironmentsApi {
     });
   }
 
-  /** Returns a pending onboarding draft; new editing sessions require native UI initialization. */
+  /** Returns a pending config draft's runtime, or opens a new editing session. */
   public async openDraft(
     id: string,
     options: RequestOptions = {},
@@ -269,9 +269,10 @@ export class EnvironmentsApi {
         environment_id: config.environment_id,
       };
     }
-    throw new CodexCloudError(
-      "New environment editing sessions must be opened with Edit environment in the Codex UI. POST /drafts alone does not register the UI editing session; naming or starting a generic follow-up does not repair it. Retain the native draft_id, environment_id, and thread_id, then use get_environment_draft to read that exact draft. No draft or thread was created.",
-    );
+    return this.http.request(`/v1/environment-configs/${segment(id)}/drafts`, {
+      method: "POST",
+      signal: options.signal,
+    });
   }
 
   /** Reads an editing-session draft or the matching onboarding draft on its config. */
@@ -318,7 +319,7 @@ export class EnvironmentsApi {
     }
   }
 
-  /** Saves onboarding draft changes guarded by the base version and expected revision. */
+  /** Saves draft changes guarded by the base version and expected revision. */
   public async updateDraft(
     id: string,
     draftId: string,
@@ -326,11 +327,6 @@ export class EnvironmentsApi {
     options: RequestOptions = {},
   ): Promise<CloudEnvironment> {
     const draft = await this.#resolveDraft(id, draftId, options);
-    if (!draft.configDraft) {
-      throw new CodexCloudError(
-        "Direct editing-session updates are unavailable because this API cannot verify native UI initialization. Open Edit environment in the Codex UI and save through its editor or its draft-owning chat, then read and publish the original draft ID. Do not use start_task or start_environment_setup to create a replacement editing task. No draft changes were saved.",
-      );
-    }
     return this.http.request(draft.path, {
       method: "PATCH",
       body: input,

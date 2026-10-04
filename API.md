@@ -33,18 +33,26 @@ credentials atomically.
 
 ## Configure and publish
 
-Initialize existing-environment edits through the native Codex UI as described in
-[Existing environment editing](#existing-environment-editing). Retain the
-original config, draft, and editing thread IDs; the runtime ID is not a config ID.
-
 ```typescript
-const current = await client.environments.getDraft(configId, draftId);
+const config = await client.environments.create({
+  name: "my repository",
+  repositories: [{ repository_id: "github-12345", ref: "main" }],
+  network_policy: { type: "unrestricted" },
+});
+const editing = await client.environments.openDraft(config.id);
+const current = await client.environments.getDraft(config.id, editing.draft_id);
 if (!current.draft) throw new Error("Draft not returned");
-// Review current.draft before publishing its exact revision.
-const published = await client.environments.publish(configId, draftId, {
-  expectedRevision: current.draft.revision,
+const saved = await client.environments.updateDraft(config.id, editing.draft_id, {
+  base_version_id: current.draft.base_version_id,
+  expected_revision: current.draft.revision,
+  install_script: "bun install --frozen-lockfile",
+  start_skill: "Run the relevant tests after changing code.",
+});
+if (!saved.draft) throw new Error("Draft not returned");
+const published = await client.environments.publish(config.id, editing.draft_id, {
+  expectedRevision: saved.draft.revision,
   idempotencyKey: crypto.randomUUID(),
-  threadId: editingThreadId,
+  threadId: editing.thread_id,
 });
 ```
 
@@ -68,8 +76,7 @@ publication.
 `getDraft()` first reads the explicit editing-session route. If that returns
 404, it reads the config and accepts its draft only when the ID matches exactly.
 `openDraft()` returns the existing config draft's runtime and thread when its
-base is the current version. Otherwise it rejects new allocation with native UI
-initialization instructions. Onboarding publication uses the singular
+base is the current version. Onboarding publication uses the singular
 `/draft/approve/begin` and `/draft/approve/complete` routes. Completion sends
 only `operation_id`; the backend selects the config's owning setup thread.
 A successful operation can consume the config draft before completion, so keep
@@ -79,11 +86,9 @@ it must match the config's `thread_id`. Older callers without retained scope can
 complete a consumed config draft using that owning thread ID.
 
 Other environment methods are `get()`, `rename()`, `getVpn()`, and
-`listSecrets()`. Secret listing returns metadata. `updateDraft()` changes
-config-owned onboarding drafts only. It supports repository refs, network
-policy, portals, scripts, start skill, `secrets`, and `runtime_requirements`.
-Direct editing-session writes are rejected because the server cannot verify
-the native UI registration; use its editor or draft-owning chat instead.
+`listSecrets()`. Secret listing returns metadata. `updateDraft()` can change
+repository refs, network policy, portals, scripts, start skill, `secrets`, and
+`runtime_requirements`.
 
 ## Variables and network secrets
 
@@ -108,7 +113,7 @@ can be reported when a later deletion fails.
 
 Shared values use `createValue({ namespace, name, value })`. Use `runtime` for
 variables or `proxy` for network secrets. Each call returns a new value reference;
-attach its ID to a config-owned onboarding draft and publish to apply it:
+attach its ID to a draft and publish to apply it:
 
 ```typescript
 const value = await client.environments.createValue({
@@ -173,62 +178,10 @@ If setup fails after creation, the error retains the config ID for recovery.
    `wait_for_environment_operation` with the same operation ID after a timeout.
 5. When the operation is `SUCCEEDED`, call `complete_environment_publish` with
    the config ID, original draft ID, operation ID, and `draftScope`. An explicit
-   editing session also needs the original native editing `threadId`.
+   editing session also needs the `threadId` returned by `open_environment_draft`.
 6. Confirm `get_environment` reports the expected published scripts and ready
    version. If completion errors, inspect that state before retrying. Do not
    start another publication just because completion's response was lost.
-
-## Existing environment editing
-
-A new edit of a published environment must start with **Edit environment** in
-Codex's environment settings. The native flow allocates a separate draft with
-`POST /v1/environment-configs/{configId}/drafts`, registers the editing session
-in the client, and opens its thread. The MCP server cannot currently perform or
-verify that UI registration. It therefore rejects new `open_environment_draft`
-allocations and direct editing-session `update_environment_draft` writes.
-It does not substitute an ordinary task or the config's original setup thread.
-
-1. In the native UI, open the environment's editing session. Keep the original
-   `configId` plus the allocation response's `draft_id`, `thread_id`, and
-   `environment_id`. If a native edit is already in progress, continue that
-   session instead of allocating another one.
-2. Use the native editor or its chat to make the requested changes. MCP callers
-   may send `follow_up_task` to that same native editing `thread_id` after its
-   active turn finishes. Tell the agent to read
-   `cloud_environment_onboarding.read_environment_config_draft`, verify the
-   exact draft ID, preserve unrelated settings/secrets, and save without
-   publishing. Those tools belong to the allocated runtime; a new `start_task`
-   or `start_environment_setup` is not an editing-session substitute.
-3. Call `get_environment_draft` with the original config and draft IDs. Verify
-   the returned draft ID and review the saved fields and revision. The explicit
-   draft response's `environment_id` is the editing runtime. `get_environment`
-   can return `draft: null` while this explicit draft still exists.
-4. Call `begin_environment_publish` with the reviewed revision and a fresh UUID
-   idempotency key. Retain the operation ID and `draft_scope`.
-5. Poll the same operation until `SUCCEEDED`, then call
-   `complete_environment_publish` with the original config/draft IDs, operation
-   ID, original editing `threadId`, and returned scope as `draftScope`.
-6. Read `get_environment` and verify the published revision and intended fields.
-
-An allocated thread without turns may be invisible in the sidebar. Naming or
-sending a first turn can make a chat discoverable, but neither proves native UI
-registration or repairs the environment icon and Continue editing state. Do not
-use those steps as a workaround for a rejected allocation. Null `threadSource`
-and missing `environmentConfigId` also occur on native editing threads and do
-not diagnose whether their draft tools are available.
-
-For legacy MCP-created sessions, keep the original IDs: reads and both
-publication paths remain available for recovery. A missing config `draft` is
-not permission to allocate a replacement. If a request times out, inspect the
-same thread's turns or the same publication operation before retrying; never
-begin a second publication to recover from a wait or completion error. A
-succeeded operation can already have changed the published version before
-completion returns an error.
-
-`draftScope` is included in the server's `complete_environment_publish` schema.
-If a connector omits it, refresh that connector's tool discovery. Older callers
-can still use the original draft and owning thread IDs for scope resolution;
-do not substitute a runtime ID for a config ID to work around a 403/404.
 
 ## Tasks and follow-ups
 
