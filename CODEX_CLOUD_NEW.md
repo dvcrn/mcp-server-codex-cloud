@@ -803,6 +803,6 @@ turn returned the exact initialized draft ID, revision, and published base.
 The deployed APIs independently saved this draft and published the dedicated
 regression config through begin, polling, and config-scope completion. Readback
 confirmed ready revision 4 and the intended install-script comment. The native
-editor can be reopened by reusing the config's owning thread and initializing
-another draft from the latest published version. Retain existing pending drafts
+editor allocation for each fresh draft uses a new config-owning thread and
+initializes the draft from the latest published version. Retain existing pending drafts
 and reject stale bases rather than replacing unpublished work.

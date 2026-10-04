@@ -7,6 +7,7 @@ function editorFixture(
   options: {
     owner?: boolean;
     active?: boolean;
+    legacyOwner?: boolean;
     lostSave?: boolean;
     concurrentDraft?: boolean;
     lostStart?: boolean;
@@ -27,12 +28,23 @@ function editorFixture(
     },
     secrets: [],
     ...(options.owner
-      ? { thread_id: "editing-thread", environment_id: "editing-runtime" }
+      ? { thread_id: "previous-thread", environment_id: "previous-runtime" }
       : {}),
   };
-  const thread = {
-    id: "editing-thread",
+  const previousThread = {
+    id: "previous-thread",
     status: { type: options.active ? "active" : "idle" },
+    environments: [
+      {
+        environmentId: "previous-runtime",
+        ...(options.legacyOwner ? {} : { environmentConfigId: "config" }),
+      },
+    ],
+  };
+  let starts = 0;
+  let thread = {
+    id: "editing-thread",
+    status: { type: "idle" },
     environments: [
       {
         environmentId: "editing-runtime",
@@ -44,6 +56,11 @@ function editorFixture(
   let configReads = 0;
   const socket = new FakeSocket((request, current) => {
     if (request.method === "thread/start") {
+      starts++;
+      thread = {
+        ...thread,
+        id: starts === 1 ? "editing-thread" : `editing-thread-${starts}`,
+      };
       config = {
         ...config,
         thread_id: thread.id,
@@ -75,7 +92,9 @@ function editorFixture(
       const body = init?.body ? JSON.parse(String(init.body)) : null;
       requests.push({ path, method, body });
       if (path.includes("/threads/")) {
-        return Response.json({ thread });
+        return Response.json({
+          thread: path.endsWith("/previous-thread") ? previousThread : thread,
+        });
       }
       if (method === "PATCH") {
         config = {
@@ -109,12 +128,26 @@ function editorFixture(
     },
     socketFactory: async () => socket,
   });
-  return { client, requests, socket };
+  return {
+    client,
+    requests,
+    socket,
+    publish() {
+      config = {
+        ...config,
+        version_id: "next-published-version",
+      };
+      delete config.draft;
+    },
+  };
 }
 
-for (const owner of [false, true]) {
-  test(`native draft ${owner ? "reuses its config-owning thread" : "allocates a durable config-owning thread"} without an agent turn`, async () => {
-    const { client, requests, socket } = editorFixture({ owner });
+for (const owner of [false, true, "legacy"] as const) {
+  test(`native draft creates a new chat with prior owner ${owner} without an agent turn`, async () => {
+    const { client, requests, socket } = editorFixture({
+      owner: !!owner,
+      legacyOwner: owner === "legacy",
+    });
     try {
       expect(await client.environments.openDraft("config")).toEqual({
         draft_id: "config-draft",
@@ -134,21 +167,18 @@ for (const owner of [false, true]) {
       ]);
       expect(requests.some((r) => r.path.endsWith("/drafts"))).toBe(false);
       expect(socket.sent.some((r) => r.method === "turn/start")).toBe(false);
-      if (owner) {
-        expect(socket.sent.some((r) => r.method === "thread/start")).toBe(
-          false,
-        );
-      } else {
-        expect(
-          socket.sent.find((r) => r.method === "thread/start")?.params,
-        ).toEqual({
-          environments: [{ onboardingConfigId: "config" }],
-          serviceName: "codex_cloud",
-          threadSource: "user",
-          deferredEnvironment: true,
-          pluginsMcp: { productSku: "codex" },
-        });
-      }
+      expect(
+        socket.sent.filter((r) => r.method === "thread/start"),
+      ).toHaveLength(1);
+      expect(
+        socket.sent.find((r) => r.method === "thread/start")?.params,
+      ).toEqual({
+        environments: [{ onboardingConfigId: "config" }],
+        serviceName: "codex_cloud",
+        threadSource: "user",
+        deferredEnvironment: true,
+        pluginsMcp: { productSku: "codex" },
+      });
       expect(
         (await client.environments.get("config")).draft?.install_script,
       ).toBe("bun install");
@@ -171,7 +201,7 @@ for (const owner of [false, true]) {
   });
 }
 
-for (const lost of ["lostStart", "lostSave"] as const) {
+for (const lost of ["lostSave"] as const) {
   test(`retry after ${lost} retains the server editor association`, async () => {
     const { client, requests, socket } = editorFixture({ [lost]: true });
     try {
@@ -190,6 +220,46 @@ for (const lost of ["lostStart", "lostSave"] as const) {
     }
   });
 }
+
+test("an unconfirmed allocation retains the owner for inspection without retrying", async () => {
+  const { client, requests, socket } = editorFixture({ lostStart: true });
+  try {
+    await expect(client.environments.openDraft("config")).rejects.toThrow(
+      "not confirmed",
+    );
+    const config = await client.environments.get("config");
+    expect(config.thread_id).toBe("editing-thread");
+    expect(config.draft).toBeUndefined();
+    expect(socket.sent.filter((r) => r.method === "thread/start")).toHaveLength(
+      1,
+    );
+    expect(requests.filter((r) => r.method === "PATCH")).toHaveLength(0);
+  } finally {
+    client.close();
+  }
+});
+
+test("a new draft after publication gets a new chat while reopening a pending draft retains its chat", async () => {
+  const { client, socket, publish } = editorFixture({ owner: true });
+  try {
+    const first = await client.environments.openDraft("config");
+    expect(await client.environments.openDraft("config")).toEqual(first);
+    expect(socket.sent.filter((r) => r.method === "thread/start")).toHaveLength(
+      1,
+    );
+    publish();
+    const second = await client.environments.openDraft("config");
+    expect(second.thread_id).not.toBe(first.thread_id);
+    expect(socket.sent.filter((r) => r.method === "thread/start")).toHaveLength(
+      2,
+    );
+    expect(
+      (await client.environments.get("config")).draft?.base_version_id,
+    ).toBe("next-published-version");
+  } finally {
+    client.close();
+  }
+});
 
 test("opening an editor preserves a draft created during thread initialization", async () => {
   const { client, requests } = editorFixture({ concurrentDraft: true });
