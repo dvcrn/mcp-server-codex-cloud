@@ -178,7 +178,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "open_environment_draft",
-    "Open or reuse a draft in a durable native environment editor. Retains the config's owning thread, or creates one without an agent turn. Keep the original config ID, draft_id, environment_id, thread_id, and draft_scope. Read get_environment_draft before saving; use follow_up_task on thread_id for agent edits to this exact draft. If opening is unconfirmed, inspect get_environment and its thread before retrying.",
+    "Create a fresh editing draft, runtime, and chat from the published environment without starting an agent turn. Existing setup drafts and owner chats remain separate. Keep the original config ID, draft_id, environment_id, thread_id, and draft_scope. Read get_environment_draft before saving; use follow_up_task on thread_id for agent edits to this exact draft. If allocation is unconfirmed, check list_tasks before retrying.",
     { id },
     false,
     (a, signal) => client.environments.openDraft(a.id, { signal }),

@@ -252,16 +252,16 @@ export class EnvironmentsApi {
     });
   }
 
-  /** Opens or reuses a config draft bound to its durable native editor thread. */
+  /** Allocates a fresh editing draft and chat from the published configuration. */
   public async openDraft(
     id: string,
     options: RequestOptions = {},
   ): Promise<EditingRuntime> {
     const config = await this.get(id, options);
-    if (config.draft && config.draft.base_version_id === config.version_id) {
+    if (config.version_revision === 1 && config.draft) {
       if (!config.thread_id || !config.environment_id) {
         throw new CodexCloudError(
-          "The config has a pending draft but no editing runtime; inspect get_environment before opening another draft",
+          "The pending draft has no onboarding runtime; inspect get_environment before allocating another draft",
         );
       }
       return {
@@ -271,97 +271,39 @@ export class EnvironmentsApi {
         draft_scope: "config",
       };
     }
-    if (config.draft) {
-      throw new CodexCloudError(
-        "The pending draft is based on an older published version; read and reconcile it before opening another draft",
-      );
-    }
-    if (!this.tasks) {
-      throw new CodexCloudError(
-        "Native environment editing requires the task API; open drafts through CodexCloudClient",
-      );
-    }
-    let threadId = config.thread_id;
+    let opened: EditingRuntime;
     try {
-      const thread = threadId
-        ? await this.tasks.get(threadId, options)
-        : await this.tasks.startEnvironmentEditingThread(id, options);
-      threadId = thread.id;
-      if (thread.status?.type === "active") {
-        throw new CodexCloudError(
-          "The editor thread has an active turn; wait for completion before opening a draft",
-        );
-      }
-      const runtime = thread.environments?.find(
-        (environment) => environment.environmentConfigId === id,
-      );
-      if (!runtime?.environmentId) {
-        throw new CodexCloudError(
-          "The editor thread is not bound to the requested config",
-        );
-      }
-      const current = await this.get(id, options);
-      if (
-        current.thread_id !== thread.id
-        || current.environment_id !== runtime.environmentId
-        || current.version_id !== config.version_id
-      ) {
-        throw new CodexCloudError(
-          "The config's editor or published version changed; inspect get_environment before retrying",
-        );
-      }
-      if (current.draft) {
-        if (current.draft.base_version_id !== current.version_id) {
-          throw new CodexCloudError(
-            "The pending draft is based on an older published version",
-          );
-        }
-        return {
-          draft_id: current.draft.id,
-          environment_id: runtime.environmentId,
-          thread_id: thread.id,
-          draft_scope: "config",
-        };
-      }
-      // An omitted revision initializes only an absent draft; existing drafts conflict.
-      const opened = await this.http.request<CloudEnvironment>(
-        `/v1/environment-configs/${segment(id)}/draft`,
+      opened = await this.http.request<EditingRuntime>(
+        `/v1/environment-configs/${segment(id)}/drafts`,
         {
-          method: "PATCH",
-          body: {
-            base_version_id: current.version_id,
-            repositories: current.repositories,
-          },
+          method: "POST",
+          body: { start_thread: true },
           signal: options.signal,
         },
       );
-      if (
-        !opened.draft
-        || opened.draft.base_version_id !== current.version_id
-        || opened.thread_id !== thread.id
-        || opened.environment_id !== runtime.environmentId
-      ) {
+      if (!opened.draft_id || !opened.thread_id || !opened.environment_id) {
         throw new CodexCloudError(
-          "Draft initialization returned an unexpected editor binding",
+          "Draft creation returned an incomplete editing session",
         );
       }
-      try {
-        await this.tasks.rename(thread.id, `Edit ${current.name}`, options);
-      } catch {
-        // Naming is cosmetic and must not hide an initialized editor.
-      }
-      return {
-        draft_id: opened.draft.id,
-        environment_id: runtime.environmentId,
-        thread_id: thread.id,
-        draft_scope: "config",
-      };
     } catch (error) {
       throw new CodexCloudError(
-        `Opening the editor for config ${id}${threadId ? ` in thread ${threadId}` : ""} was not confirmed. Read get_environment and its thread before retrying; preserve any returned draft and runtime.`,
+        `Editing draft allocation for config ${id} was not confirmed. Check list_tasks before retrying; a fresh draft and chat may already exist.`,
         { cause: error },
       );
     }
+    if (this.tasks) {
+      try {
+        await this.tasks.rename(
+          opened.thread_id,
+          `Edit ${config.name}`,
+          options,
+        );
+      } catch {
+        // Naming is cosmetic and must not hide an allocated editing session.
+      }
+    }
+    return { ...opened, draft_scope: "editing_session" };
   }
 
   /** Reads an editing-session draft or the matching onboarding draft on its config. */

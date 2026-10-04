@@ -99,18 +99,6 @@ export class TasksApi {
     );
   }
 
-  /** Allocates a durable config-owning editor thread without starting an agent turn. */
-  public async startEnvironmentEditingThread(
-    environmentConfigId: string,
-    options: RequestOptions = {},
-  ): Promise<Thread> {
-    return this.#startThread(
-      { onboardingConfigId: environmentConfigId },
-      {},
-      options,
-    );
-  }
-
   async #startThread(
     environment:
       | { environmentConfigId: string; cwd?: string }
