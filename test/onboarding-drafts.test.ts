@@ -76,6 +76,7 @@ test("opening a pending onboarding draft returns its original runtime without al
     draft_id: "onboarding-draft",
     thread_id: "onboarding-thread",
     environment_id: "onboarding-runtime",
+    draft_scope: "config",
   });
   expect(requests).toHaveLength(1);
   expect(requests[0]?.method).toBe("GET");

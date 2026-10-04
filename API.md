@@ -34,11 +34,7 @@ credentials atomically.
 ## Configure and publish
 
 ```typescript
-const config = await client.environments.create({
-  name: "my repository",
-  repositories: [{ repository_id: "github-12345", ref: "main" }],
-  network_policy: { type: "unrestricted" },
-});
+const config = await client.environments.get("published-config-id");
 const editing = await client.environments.openDraft(config.id);
 const current = await client.environments.getDraft(config.id, editing.draft_id);
 if (!current.draft) throw new Error("Draft not returned");
@@ -76,7 +72,17 @@ publication.
 `getDraft()` first reads the explicit editing-session route. If that returns
 404, it reads the config and accepts its draft only when the ID matches exactly.
 `openDraft()` returns the existing config draft's runtime and thread when its
-base is the current version. Onboarding publication uses the singular
+base is the current version. Otherwise it reuses the config's owning editor
+thread, or creates one without starting an agent turn, and initializes a draft
+from the published configuration. The thread has the native environment editor
+and Save/Publish controls. Continue agent edits with
+`tasks.followUp({ threadId: editing.thread_id, prompt: "..." })`; its environment
+tools read and update that same draft. Keep the original persistent config ID,
+returned runtime/thread IDs, and `draft_scope: "config"`. A stale pending draft
+must be reconciled before opening another one. If opening is unconfirmed, read
+the config and its thread before retrying.
+
+Config-draft publication uses the singular
 `/draft/approve/begin` and `/draft/approve/complete` routes. Completion sends
 only `operation_id`; the backend selects the config's owning setup thread.
 A successful operation can consume the config draft before completion, so keep

@@ -98,19 +98,30 @@ export class TasksApi {
     );
   }
 
-  async #create(
-    input: Omit<CreateTaskInput, "environmentConfigId"> & { name?: string },
+  /** Allocates a durable config-owning editor thread without starting an agent turn. */
+  public async startEnvironmentEditingThread(
+    environmentConfigId: string,
+    options: RequestOptions = {},
+  ): Promise<Thread> {
+    return this.#startThread(
+      { onboardingConfigId: environmentConfigId },
+      {},
+      options,
+    );
+  }
+
+  async #startThread(
     environment:
       | { environmentConfigId: string; cwd?: string }
       | { onboardingConfigId: string },
+    input: Pick<CreateTaskInput, "model" | "serviceTier">,
     options: RequestOptions,
-  ): Promise<CreatedTask> {
+  ): Promise<Thread> {
     segment(
       "onboardingConfigId" in environment
         ? environment.onboardingConfigId
         : environment.environmentConfigId,
     );
-    validatePrompt(input.prompt);
     const response = await this.rpc.request<{ thread: Thread }>(
       "thread/start",
       {
@@ -131,20 +142,32 @@ export class TasksApi {
         "Cloud thread creation returned no thread ID; list threads before retrying",
       );
     }
+    return response.thread;
+  }
+
+  async #create(
+    input: Omit<CreateTaskInput, "environmentConfigId"> & { name?: string },
+    environment:
+      | { environmentConfigId: string; cwd?: string }
+      | { onboardingConfigId: string },
+    options: RequestOptions,
+  ): Promise<CreatedTask> {
+    validatePrompt(input.prompt);
+    const allocated = await this.#startThread(environment, input, options);
     let turn: Turn;
     try {
       turn = await this.#startTurn(
-        { ...input, threadId: response.thread.id },
+        { ...input, threadId: allocated.id },
         options,
       );
     } catch (error) {
       // Allocation succeeded even if starting the first turn has an unknown outcome.
       throw new CodexCloudError(
-        `Thread ${response.thread.id} was created, but its first turn failed or its result was lost. Read its turns before retrying.`,
+        `Thread ${allocated.id} was created, but its first turn failed or its result was lost. Read its turns before retrying.`,
         { cause: error },
       );
     }
-    let thread = response.thread;
+    let thread = allocated;
     if (input.name !== undefined) {
       try {
         await this.rpc.request(

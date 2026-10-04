@@ -741,6 +741,68 @@ and lacked `environmentConfigId`. Neither field is a reliable standalone test
 of native editing registration. Adding a title is not proof of registration.
 
 The MCP must support the editing lifecycle without requiring a UI handoff.
-Backend draft creation and publication are supported; automatic sidebar
-registration still needs an independently verified implementation. Unit tests
+Backend draft creation and publication are supported. The config-owning editor
+path verified below provides automatic sidebar registration. Unit tests
 of REST routing cannot establish UI visibility or classification.
+
+### Local investigation, 2026-10-04
+
+**Web source:** Proxyman identified the current ChatGPT web bundle
+`https://chatgpt.com/cdn/assets/async/385910.71a81f043e.js`. Its browser host
+handles `persisted-atom-update` by updating IndexedDB database
+`codex-browser-host`, object store `records`, record
+`codex.browser.persistedAtomState`. The editing association is the
+`environment-setup-server-configs-v1` entry within that record. This write does
+not use the cloud thread API.
+
+**Two registration paths:** the editor first reads this association by thread
+ID. If absent, it fetches the config identified by the thread's
+`environmentConfigId` and accepts it only when the config's `thread_id` matches.
+That recovery path sets `publicationStateUnknown: true`. It explains why a
+config-owning setup task can retain its setup classification in another client;
+it does not recover a separate editing-session draft/runtime association.
+
+**Independent browser comparison:** Chrome's native Edit action on the dedicated
+regression config created an editing thread with the setup icon, environment
+panel, and Save and publish button. Opening that exact thread from Dia's sidebar
+showed a plain cloud chat without those controls. Chrome still showed them.
+Dia retained the setup icon for the existing `Set up codex` task. No turn was
+submitted and neither draft nor published settings were changed during this
+comparison. Reloading both browsers preserved the editing-task difference;
+Proxyman captured successful page requests from both clients.
+
+**Cloud metadata:** both authenticated HTTP reads and WebSocket `thread/resume`
+returned the native-created editing runtime without `environmentConfigId` or
+`threadStartKind`, with null `threadSource` and `extra`. The current app-server
+metadata-update schema provides Git metadata, project assignment, and Daybreak
+fields, without an environment-editor registration field. No equivalent cloud
+registration operation has been identified for separate editing sessions.
+
+**Native turn metadata probe:** the web request serializer supports
+`productMetadata.environment_onboarding` with `environment_config_id`,
+`draft_id`, and `expected_draft_id` for draft replacement on `turn/start`.
+A read-only turn using those fields completed and the onboarding draft-read
+tool returned the exact editing draft at revision 1. Independent Worker reads
+still showed no thread config association, and refreshing Dia still produced
+a plain chat without environment controls. These fields are not verified as
+a native UI initialization mechanism. The agent reported an internal runtime
+config ID, so callers must retain the original persistent config ID rather
+than replacing it with that agent response.
+
+**Verified config-owning editor path:** `thread/start` with the published config
+as `onboardingConfigId`, `serviceName: "codex_cloud"`, `threadSource: "user"`,
+and `deferredEnvironment: true` persists the thread/config association even
+without an agent turn. `PATCH /v1/environment-configs/{id}/draft` with the
+published `base_version_id` and unchanged `repositories` initializes its draft.
+No `expected_revision` is supplied for initialization; a supplied revision or
+an existing pending draft produces HTTP 409. Subsequent saves retain revision
+guards. After reload, Dia displayed the setup icon, actual environment editor,
+and Save and publish control through server recovery alone. A read-only agent
+turn returned the exact initialized draft ID, revision, and published base.
+
+The deployed APIs independently saved this draft and published the dedicated
+regression config through begin, polling, and config-scope completion. Readback
+confirmed ready revision 4 and the intended install-script comment. The native
+editor can be reopened by reusing the config's owning thread and initializing
+another draft from the latest published version. Retain existing pending drafts
+and reject stale bases rather than replacing unpublished work.
