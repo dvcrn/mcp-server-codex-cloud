@@ -34,11 +34,7 @@ credentials atomically.
 ## Configure and publish
 
 ```typescript
-const config = await client.environments.create({
-  name: "my repository",
-  repositories: [{ repository_id: "github-12345", ref: "main" }],
-  network_policy: { type: "unrestricted" },
-});
+const config = await client.environments.get("published-config-id");
 const editing = await client.environments.openDraft(config.id);
 const current = await client.environments.getDraft(config.id, editing.draft_id);
 if (!current.draft) throw new Error("Draft not returned");
@@ -75,8 +71,17 @@ publication.
 
 `getDraft()` first reads the explicit editing-session route. If that returns
 404, it reads the config and accepts its draft only when the ID matches exactly.
-`openDraft()` returns the existing config draft's runtime and thread when its
-base is the current version. Onboarding publication uses the singular
+`openDraft()` creates a separate editing-session draft, runtime, and chat from
+the published configuration. It preserves the config's existing owner and
+pending setup draft. An unpublished config with an onboarding draft reuses its
+setup runtime. Continue agent edits with
+`tasks.followUp({ threadId: editing.thread_id, prompt: "..." })`; its environment
+tools read and update that same draft. Keep the original persistent config ID,
+returned draft/runtime/thread IDs, and publication scope. Editing-session drafts
+use `draft_scope: "editing_session"`. If allocation is unconfirmed, inspect
+`list_tasks` before retrying because a draft and chat may already exist.
+
+Config-draft publication uses the singular
 `/draft/approve/begin` and `/draft/approve/complete` routes. Completion sends
 only `operation_id`; the backend selects the config's owning setup thread.
 A successful operation can consume the config draft before completion, so keep

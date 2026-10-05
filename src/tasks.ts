@@ -15,6 +15,7 @@ import type { HttpClient } from "./http.js";
 import { segment } from "./internal.js";
 import type { RpcClient } from "./rpc.js";
 import type {
+  ArchiveTaskResult,
   CreatedTask,
   CreateTaskInput,
   FollowUpTaskInput,
@@ -98,19 +99,18 @@ export class TasksApi {
     );
   }
 
-  async #create(
-    input: Omit<CreateTaskInput, "environmentConfigId"> & { name?: string },
+  async #startThread(
     environment:
       | { environmentConfigId: string; cwd?: string }
       | { onboardingConfigId: string },
+    input: Pick<CreateTaskInput, "model" | "serviceTier">,
     options: RequestOptions,
-  ): Promise<CreatedTask> {
+  ): Promise<Thread> {
     segment(
       "onboardingConfigId" in environment
         ? environment.onboardingConfigId
         : environment.environmentConfigId,
     );
-    validatePrompt(input.prompt);
     const response = await this.rpc.request<{ thread: Thread }>(
       "thread/start",
       {
@@ -131,20 +131,32 @@ export class TasksApi {
         "Cloud thread creation returned no thread ID; list threads before retrying",
       );
     }
+    return response.thread;
+  }
+
+  async #create(
+    input: Omit<CreateTaskInput, "environmentConfigId"> & { name?: string },
+    environment:
+      | { environmentConfigId: string; cwd?: string }
+      | { onboardingConfigId: string },
+    options: RequestOptions,
+  ): Promise<CreatedTask> {
+    validatePrompt(input.prompt);
+    const allocated = await this.#startThread(environment, input, options);
     let turn: Turn;
     try {
       turn = await this.#startTurn(
-        { ...input, threadId: response.thread.id },
+        { ...input, threadId: allocated.id },
         options,
       );
     } catch (error) {
       // Allocation succeeded even if starting the first turn has an unknown outcome.
       throw new CodexCloudError(
-        `Thread ${response.thread.id} was created, but its first turn failed or its result was lost. Read its turns before retrying.`,
+        `Thread ${allocated.id} was created, but its first turn failed or its result was lost. Read its turns before retrying.`,
         { cause: error },
       );
     }
-    let thread = response.thread;
+    let thread = allocated;
     if (input.name !== undefined) {
       try {
         await this.rpc.request(
@@ -179,14 +191,68 @@ export class TasksApi {
     threadId: string,
     options: RequestOptions = {},
   ): Promise<{ threadId: string; archived: true }> {
-    const thread = await this.get(threadId, options);
-    if (thread.status?.type === "active") {
+    const result = await this.#archiveIdleThread(threadId, options);
+    if (result.status === "skipped") {
       throw new CodexCloudError(
         "Thread has an active turn; interrupt it or wait for completion before archiving",
       );
     }
-    await this.rpc.request("thread/archive", { threadId }, options);
     return { threadId, archived: true };
+  }
+
+  /** Archives distinct idle threads with at most five concurrent operations and reports individual outcomes. */
+  public async archiveMany(
+    threadIds: string[],
+    options: RequestOptions = {},
+  ): Promise<{ results: ArchiveTaskResult[] }> {
+    if (threadIds.length === 0 || threadIds.length > 500) {
+      throw new CodexCloudError("Provide between 1 and 500 thread IDs");
+    }
+    for (const threadId of threadIds) {
+      segment(threadId);
+    }
+    const ids = [...new Set(threadIds)];
+    const results: ArchiveTaskResult[] = [];
+    for (let offset = 0; offset < ids.length; offset += 5) {
+      options.signal?.throwIfAborted();
+      results.push(
+        ...(await Promise.all(
+          ids
+            .slice(offset, offset + 5)
+            .map(async (threadId): Promise<ArchiveTaskResult> => {
+              try {
+                return await this.#archiveIdleThread(threadId, options);
+              } catch (error) {
+                options.signal?.throwIfAborted();
+                return {
+                  threadId,
+                  status: "failed",
+                  error:
+                    error instanceof CodexCloudError
+                      ? error.message
+                      : "Archive failed or its result was lost. Check list_tasks before retrying.",
+                };
+              }
+            }),
+        )),
+      );
+    }
+    options.signal?.throwIfAborted();
+    return { results };
+  }
+
+  async #archiveIdleThread(
+    threadId: string,
+    options: RequestOptions,
+  ): Promise<Exclude<ArchiveTaskResult, { status: "failed" }>> {
+    options.signal?.throwIfAborted();
+    const thread = await this.get(threadId, options);
+    options.signal?.throwIfAborted();
+    if (thread.status?.type === "active") {
+      return { threadId, status: "skipped", reason: "active_turn" };
+    }
+    await this.rpc.request("thread/archive", { threadId }, options);
+    return { threadId, status: "archived" };
   }
 
   /** Restores an archived thread and returns its metadata. */

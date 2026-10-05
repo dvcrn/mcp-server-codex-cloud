@@ -125,6 +125,7 @@ export interface EditingRuntime {
   draft_id: string;
   environment_id: string;
   thread_id: string;
+  draft_scope: EnvironmentDraftScope;
 }
 
 export type EnvironmentDraftScope = "config" | "editing_session";
@@ -251,28 +252,58 @@ export class EnvironmentsApi {
     });
   }
 
-  /** Returns a pending config draft's runtime, or opens a new editing session. */
+  /** Allocates a fresh editing draft and chat from the published configuration. */
   public async openDraft(
     id: string,
     options: RequestOptions = {},
   ): Promise<EditingRuntime> {
     const config = await this.get(id, options);
-    if (config.draft && config.draft.base_version_id === config.version_id) {
+    if (config.version_revision === 1 && config.draft) {
       if (!config.thread_id || !config.environment_id) {
         throw new CodexCloudError(
-          "The config has a pending draft but no editing runtime; inspect get_environment before opening another draft",
+          "The pending draft has no onboarding runtime; inspect get_environment before allocating another draft",
         );
       }
       return {
         draft_id: config.draft.id,
         thread_id: config.thread_id,
         environment_id: config.environment_id,
+        draft_scope: "config",
       };
     }
-    return this.http.request(`/v1/environment-configs/${segment(id)}/drafts`, {
-      method: "POST",
-      signal: options.signal,
-    });
+    let opened: EditingRuntime;
+    try {
+      opened = await this.http.request<EditingRuntime>(
+        `/v1/environment-configs/${segment(id)}/drafts`,
+        {
+          method: "POST",
+          body: { start_thread: true },
+          signal: options.signal,
+        },
+      );
+      if (!opened.draft_id || !opened.thread_id || !opened.environment_id) {
+        throw new CodexCloudError(
+          "Draft creation returned an incomplete editing session",
+        );
+      }
+    } catch (error) {
+      throw new CodexCloudError(
+        `Editing draft allocation for config ${id} was not confirmed. Check list_tasks before retrying; a fresh draft and chat may already exist.`,
+        { cause: error },
+      );
+    }
+    if (this.tasks) {
+      try {
+        await this.tasks.rename(
+          opened.thread_id,
+          `Edit ${config.name}`,
+          options,
+        );
+      } catch {
+        // Naming is cosmetic and must not hide an allocated editing session.
+      }
+    }
+    return { ...opened, draft_scope: "editing_session" };
   }
 
   /** Reads an editing-session draft or the matching onboarding draft on its config. */

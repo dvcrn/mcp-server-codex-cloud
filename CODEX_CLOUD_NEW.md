@@ -709,3 +709,107 @@ The SDK-created onboarding agent also saved draft configuration while investigat
 Resolved `dvcrn/kikuyo` through GitHub to repository ID `1183961938` and default branch `main`. No existing user-scope config referenced this repository. Created a private `kikuyo` config with `repositories: [{repository_id: "github-1183961938", ref: "main"}]`, the SDK default package-manager network policy, and `start_onboarding: false`, then invoked `tasks.setupEnvironment()` on the returned config ID. State was saved between mutations so an unknown setup result does not trigger duplicate config creation.
 
 Config ID: `471458c8-c98d-4154-83ff-a46a102c0282~asenvcfg_cb100b0f0cf08191991c15528e62183c`. Setup thread: `01a0f752-dc9b-7660-947e-8e5c2563709f`. Turn: `01a0f752-ec06-7563-8126-90d30b2ad18d`. HTTP readback confirmed the selected config and persisted canonical skill instruction with turn status `inProgress`. The browser independently showed the onboarding skill running and identifying Phoenix, PostgreSQL, pinned Erlang/Elixir, and Bun. The agent is preparing and validating the workflow asynchronously; it has not been reported as completed or published. This user-requested setup remains running. Private state/proof are `kikuyo-setup-state.json` and `kikuyo-onboarding-proof.png`.
+
+## Existing-environment editing investigation (2026-10-04)
+
+**Captured and probed:** an empty-body `POST /v1/environment-configs/{id}/drafts`
+allocates a draft, editing runtime, and thread. A read-only agent turn in that
+thread successfully called `cloud_environment_onboarding.read_environment_config_draft`
+and returned the exact allocated draft ID. The update tool was also available.
+The API provides real draft-editing context; a missing sidebar icon does not
+establish that it created an ordinary task runtime.
+
+**Probed:** the published config can report `draft: null` while the explicit
+`GET /v1/environment-configs/{id}/drafts/{draftId}` returns its editing-session
+draft. Retain the original config ID, draft ID, thread ID, and editing runtime;
+do not substitute the source config ID or published runtime.
+
+**User-observed:** allocating, naming, and resuming an editing thread did not
+initially make it visible in the sidebar. After its first read-only turn it
+appeared, but lacked the environment-edit icon. This remains unresolved.
+
+**Client source:** the inspected desktop client stores a separate mapping in
+`environment-setup-server-configs-v1`, keyed by thread ID, containing config,
+draft, runtime, account, and user IDs. The sidebar checks that mapping. Desktop
+writes use persisted-atom messages backed by local application state. This does
+not establish how the web client persists the association or whether a server
+API can register it. The uploaded WebSocket capture contains name/resume calls
+but no corresponding HTTP state-persistence evidence.
+
+**Captured:** native UI-created editing threads also had null `threadSource`
+and lacked `environmentConfigId`. Neither field is a reliable standalone test
+of native editing registration. Adding a title is not proof of registration.
+
+The MCP must support the editing lifecycle without requiring a UI handoff.
+Backend draft creation and publication are supported. The config-owning editor
+path verified below provides automatic sidebar registration. Unit tests
+of REST routing cannot establish UI visibility or classification.
+
+### Local investigation, 2026-10-04
+
+**Web source:** Proxyman identified the current ChatGPT web bundle
+`https://chatgpt.com/cdn/assets/async/385910.71a81f043e.js`. Its browser host
+handles `persisted-atom-update` by updating IndexedDB database
+`codex-browser-host`, object store `records`, record
+`codex.browser.persistedAtomState`. The editing association is the
+`environment-setup-server-configs-v1` entry within that record. This write does
+not use the cloud thread API.
+
+**Two registration paths:** the editor first reads this association by thread
+ID. If absent, it fetches the config identified by the thread's
+`environmentConfigId` and accepts it only when the config's `thread_id` matches.
+That recovery path sets `publicationStateUnknown: true`. It explains why a
+config-owning setup task can retain its setup classification in another client;
+it does not recover a separate editing-session draft/runtime association.
+
+**Independent browser comparison:** Chrome's native Edit action on the dedicated
+regression config created an editing thread with the setup icon, environment
+panel, and Save and publish button. Opening that exact thread from Dia's sidebar
+showed a plain cloud chat without those controls. Chrome still showed them.
+Dia retained the setup icon for the existing `Set up codex` task. No turn was
+submitted and neither draft nor published settings were changed during this
+comparison. Reloading both browsers preserved the editing-task difference;
+Proxyman captured successful page requests from both clients.
+
+**Cloud metadata:** both authenticated HTTP reads and WebSocket `thread/resume`
+returned the native-created editing runtime without `environmentConfigId` or
+`threadStartKind`, with null `threadSource` and `extra`. The current app-server
+metadata-update schema provides Git metadata, project assignment, and Daybreak
+fields, without an environment-editor registration field. No equivalent cloud
+registration operation has been identified for separate editing sessions.
+
+**Native turn metadata probe:** the web request serializer supports
+`productMetadata.environment_onboarding` with `environment_config_id`,
+`draft_id`, and `expected_draft_id` for draft replacement on `turn/start`.
+A read-only turn using those fields completed and the onboarding draft-read
+tool returned the exact editing draft at revision 1. Independent Worker reads
+still showed no thread config association, and refreshing Dia still produced
+a plain chat without environment controls. These fields are not verified as
+a native UI initialization mechanism. The agent reported an internal runtime
+config ID, so callers must retain the original persistent config ID rather
+than replacing it with that agent response.
+
+**Verified config-owning editor path:** `thread/start` with the published config
+as `onboardingConfigId`, `serviceName: "codex_cloud"`, `threadSource: "user"`,
+and `deferredEnvironment: true` persists the thread/config association even
+without an agent turn. `PATCH /v1/environment-configs/{id}/draft` with the
+published `base_version_id` and unchanged `repositories` initializes its draft.
+No `expected_revision` is supplied for initialization; a supplied revision or
+an existing pending draft produces HTTP 409. Subsequent saves retain revision
+guards. After reload, Dia displayed the setup icon, actual environment editor,
+and Save and publish control through server recovery alone. A read-only agent
+turn returned the exact initialized draft ID, revision, and published base.
+
+The deployed APIs independently saved this draft and published the dedicated
+regression config through begin, polling, and config-scope completion. Readback
+confirmed ready revision 4 and the intended install-script comment. The native
+editor can be reopened by reusing the config's owning thread and initializing
+another draft from the latest published version. Retain existing pending drafts
+and reject stale bases rather than replacing unpublished work.
+
+A subsequent live attempt to allocate a fresh native owner on the same published
+regression config returned RPC -32004, `environment onboarding has already
+started`. No thread or draft was allocated. This onboarding path permits one
+owner and supports reopening drafts on that thread; it does not implement a new
+chat for every draft. The attempted always-allocate change was withdrawn after
+this upstream validation failed.

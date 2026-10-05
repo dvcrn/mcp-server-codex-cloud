@@ -178,7 +178,7 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
   );
   tool(
     "open_environment_draft",
-    "Return the existing pending config draft and its runtime, or open a new editing draft. Keep draft_id, environment_id, and thread_id for saving and publishing.",
+    "Create a fresh editing draft, runtime, and chat from the published environment without starting an agent turn. Existing setup drafts and owner chats remain separate. Keep the original config ID, draft_id, environment_id, thread_id, and draft_scope. Read get_environment_draft before saving; use follow_up_task on thread_id for agent edits to this exact draft. If allocation is unconfirmed, check list_tasks before retrying.",
     { id },
     false,
     (a, signal) => client.environments.openDraft(a.id, { signal }),
@@ -365,6 +365,13 @@ export function createMcpServer(client: CodexCloudClient): McpServer {
     { threadId: id, name: id },
     false,
     (a, signal) => client.tasks.rename(a.threadId, a.name, { signal }),
+  );
+  tool(
+    "archive_tasks",
+    "Archive specified idle cloud tasks with bounded concurrency without resuming their environments. Duplicate IDs are processed once. Returns per-thread archived, skipped (active turn), or failed outcomes. Verify failed IDs with list_tasks before retrying uncertain results.",
+    { threadIds: z.array(id).min(1).max(500) },
+    false,
+    (a, signal) => client.tasks.archiveMany(a.threadIds, { signal }),
   );
   tool(
     "archive_task",

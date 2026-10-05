@@ -23,7 +23,6 @@ test("config create and draft save use versioned routes, refs, and revision guar
     name: "test",
     repositories: [{ repository_id: "github-123", ref: "main" }],
   });
-  await client.environments.openDraft("config");
   await client.environments.updateDraft("config", "draft", {
     base_version_id: "version",
     expected_revision: 1,
@@ -45,12 +44,6 @@ test("config create and draft save use versioned routes, refs, and revision guar
         share_settings: "private",
         start_onboarding: false,
       },
-    },
-    { path: "/v1/environment-configs/config", method: "GET", body: undefined },
-    {
-      path: "/v1/environment-configs/config/drafts",
-      method: "POST",
-      body: undefined,
     },
     {
       path: "/v1/environment-configs/config/drafts/draft",
