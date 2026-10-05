@@ -191,15 +191,11 @@ export class TasksApi {
     threadId: string,
     options: RequestOptions = {},
   ): Promise<{ threadId: string; archived: true }> {
-    const { results } = await this.archiveMany([threadId], options);
-    const [result] = results;
-    if (result?.status === "skipped") {
+    const result = await this.#archiveIdleThread(threadId, options);
+    if (result.status === "skipped") {
       throw new CodexCloudError(
         "Thread has an active turn; interrupt it or wait for completion before archiving",
       );
-    }
-    if (result?.status === "failed") {
-      throw new CodexCloudError(result.error);
     }
     return { threadId, archived: true };
   }
@@ -225,13 +221,9 @@ export class TasksApi {
             .slice(offset, offset + 5)
             .map(async (threadId): Promise<ArchiveTaskResult> => {
               try {
-                const thread = await this.get(threadId, options);
-                if (thread.status?.type === "active") {
-                  return { threadId, status: "skipped", reason: "active_turn" };
-                }
-                await this.rpc.request("thread/archive", { threadId }, options);
-                return { threadId, status: "archived" };
+                return await this.#archiveIdleThread(threadId, options);
               } catch (error) {
+                options.signal?.throwIfAborted();
                 return {
                   threadId,
                   status: "failed",
@@ -245,7 +237,22 @@ export class TasksApi {
         )),
       );
     }
+    options.signal?.throwIfAborted();
     return { results };
+  }
+
+  async #archiveIdleThread(
+    threadId: string,
+    options: RequestOptions,
+  ): Promise<Exclude<ArchiveTaskResult, { status: "failed" }>> {
+    options.signal?.throwIfAborted();
+    const thread = await this.get(threadId, options);
+    options.signal?.throwIfAborted();
+    if (thread.status?.type === "active") {
+      return { threadId, status: "skipped", reason: "active_turn" };
+    }
+    await this.rpc.request("thread/archive", { threadId }, options);
+    return { threadId, status: "archived" };
   }
 
   /** Restores an archived thread and returns its metadata. */
